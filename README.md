@@ -1,8 +1,33 @@
-# DJOneHubNative
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/AppIcon-dark.png">
+    <img alt="DJOneHub Native" src="docs/AppIcon-light.png" width="128">
+  </picture>
+</p>
+
+<h1 align="center">DJOneHub Native</h1>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-PolyForm%20Noncommercial-orange"></a>
+  <img alt="macOS" src="https://img.shields.io/badge/macOS-13.0%2B-black?logo=apple&logoColor=white">
+  <img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-5-orange?logo=swift&logoColor=white">
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.26.3-blue?logo=go&logoColor=white">
+  <a href="https://github.com/cr-zhichen/DJOneHubNative/releases"><img alt="Release" src="https://img.shields.io/github/v/release/cr-zhichen/DJOneHubNative"></a>
+</p>
+
+## 简介
 
 DJOneHub（大疆第一代 4G 模块管理工具）的原生 macOS 重制版：SwiftUI 原生窗口界面 + Go 后端子进程，通过 Unix domain socket 通信，支持短信收发、eSIM Profile 管理、网络诊断与 AT 调试。
 
 由 [ZenGeekLabs/DJOneHub](https://github.com/ZenGeekLabs/DJOneHub)（源自 [iniwex5/vohive](https://github.com/iniwex5/vohive)）改造而来：Web 套壳界面替换为原生 SwiftUI，后端 Go 逻辑保留自上游。
+
+## 功能特性
+
+- 首页总览：模块状态、设备信息、实时流量、网卡优先级、短信保存与语音通话状态
+- 短信收发：会话列表 / 新短信系统通知 / 验证码标记 / 模块旧短信清理
+- eSIM Profile 管理：卡片信息 / Profile 列表 / 下载 / 启用 / 改名 / 删除 / 号码资料
+- 网络与流量：实时流量 / 网卡模式切换 / 4G 出口与代理检查 / 模块重启
+- 调试与诊断：网络诊断详情 / AT 指令调试 / 通知调试（分页组织）
 
 ## 接入准备
 
