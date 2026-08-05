@@ -11,6 +11,7 @@ struct HomeView: View {
     @State private var copiedValue: String?
     @State private var draggedService: Int?
     @State private var showNotifyDeniedAlert = false
+    @StateObject private var ringtonePreview = RingtonePreview()
 
     private var status: DeviceStatus? { store.status }
     private var health: HealthStatus? { store.health }
@@ -100,16 +101,6 @@ struct HomeView: View {
                 }
                 .padding(16)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .overlay(alignment: .top) {
-            if store.callStatus.isIncoming {
-                IncomingCallBanner(
-                    number: store.callStatus.number ?? "未知号码",
-                    onDetail: { store.showCallDetail = true },
-                    onHangup: { store.hangup() })
-                .padding(.top, 12)
-                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: 0.25), value: store.callStatus)
@@ -409,6 +400,7 @@ struct HomeView: View {
 
     private var voiceCard: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // 标题行：状态徽标 + 通话操作
             HStack(spacing: 10) {
                 Text("语音通话").font(.callout.bold())
                 Spacer()
@@ -424,10 +416,43 @@ struct HomeView: View {
                     .controlSize(.small)
                 }
             }
+
+            // 启用语音
             switchRow("启用语音", isOn: Binding(
                 get: { store.voiceEnabled },
                 set: { store.setVoiceEnabled($0) }
             ))
+
+            // 来电铃声选择 + 试听
+            HStack(spacing: 8) {
+                Text("来电铃声").font(.callout)
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { Ringtones.selectedID() },
+                    set: {
+                        ringtonePreview.stop()
+                        Ringtones.setSelected($0)
+                    }
+                )) {
+                    ForEach(Ringtones.all) { ringtone in
+                        Text(ringtone.displayName).tag(ringtone.id)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                Button {
+                    ringtonePreview.toggle()
+                } label: {
+                    Image(systemName: ringtonePreview.isPlaying ? "stop.circle.fill" : "play.circle.fill")
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+                .disabled(Ringtones.selectedID() == Ringtones.silentID)
+                .help(ringtonePreview.isPlaying ? "停止试听" : (Ringtones.selectedID() == Ringtones.silentID ? "已选择静音，无铃声可试听" : "试听当前铃声"))
+            }
+
+            // 通话中的动态信息
             if let number = store.callStatus.number, !number.isEmpty {
                 infoRow("号码", number)
             }
@@ -439,6 +464,16 @@ struct HomeView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            // 通话记录（单独一行）
+            Button {
+                store.showCallHistory = true
+            } label: {
+                Label("通话记录（\(store.callHistory.count)）", systemImage: "clock.arrow.circlepath")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
             Text("当前模块固件不支持通话音频传输，仅支持来电与通话状态查看。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -447,8 +482,8 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
-        .sheet(isPresented: $store.showCallDetail) {
-            CallDetailView()
+        .sheet(isPresented: $store.showCallHistory) {
+            CallHistoryView()
         }
     }
 
@@ -653,43 +688,6 @@ struct CallDetailView: View {
         case "dialing", "alerting": return .orange
         default: return .primary
         }
-    }
-}
-
-/// 来电横幅
-struct IncomingCallBanner: View {
-    let number: String
-    let onDetail: () -> Void
-    let onHangup: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "phone.fill")
-                .foregroundStyle(.red)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("来电").font(.callout.bold())
-                Text(number).font(.callout).textSelection(.enabled)
-            }
-            Spacer()
-            Button {
-                onDetail()
-            } label: {
-                Label("查看详情", systemImage: "info.circle")
-            }
-            .buttonStyle(.bordered)
-            Button {
-                onHangup()
-            } label: {
-                Label("挂断", systemImage: "phone.down.fill")
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-        }
-        .padding(14)
-        .frame(maxWidth: 480)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.red.opacity(0.4), lineWidth: 1))
-        .shadow(color: .black.opacity(0.2), radius: 10, y: 3)
     }
 }
 

@@ -22,6 +22,7 @@ enum AppSection: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject private var backend: BackendProcess
+    @EnvironmentObject private var store: DashboardStore
     @EnvironmentObject private var smsStore: SMSStore
     @EnvironmentObject private var updateChecker: UpdateChecker
     @State private var selection: AppSection? = .home
@@ -90,6 +91,16 @@ struct ContentView: View {
             // 点击短信通知：切到短信页（号码选择由短信页处理）
             if sender != nil {
                 selection = .sms
+            }
+        }
+        // 来电详情弹窗（根层挂载，任意页面都能弹出）
+        .sheet(isPresented: $store.showCallDetail) {
+            CallDetailView()
+        }
+        .onChange(of: store.showCallDetail) { shown in
+            // 点击来电通知：切回首页并弹出通话详情
+            if shown {
+                selection = .home
             }
         }
     }

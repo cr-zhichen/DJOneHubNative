@@ -31,6 +31,8 @@ targets:
       - path: app/Sources
       - path: app/Resources/Icons
       - path: app/Resources/Assets.xcassets
+      - path: app/Resources/Ringtones
+        type: folder
     dependencies:
       - package: Awesome
     settings:

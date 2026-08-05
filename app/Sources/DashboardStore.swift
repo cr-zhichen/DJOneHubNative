@@ -14,6 +14,8 @@ struct ToastItem: Identifiable, Equatable {
 /// 避免每次进入首页都重新拉取导致"读取模块状态…"闪烁。
 @MainActor
 final class DashboardStore: ObservableObject {
+    /// 供 AppDelegate（通知点击）等非视图位置访问
+    static weak var shared: DashboardStore?
     @Published var health: HealthStatus?
     @Published var status: DeviceStatus?
     @Published var traffic: TrafficSnapshot?
@@ -52,6 +54,10 @@ final class DashboardStore: ObservableObject {
     @Published var incomingAt: Date?
     /// 是否显示来电详情弹窗
     @Published var showCallDetail = false
+    /// 通话记录
+    @Published var callHistory: [CallRecord] = []
+    /// 是否显示通话记录弹窗
+    @Published var showCallHistory = false
 
     private let backend: BackendProcess
     private var timer: Timer?
@@ -70,6 +76,7 @@ final class DashboardStore: ObservableObject {
                     self.loadServices()
                     self.syncSMSAdopt()
                     self.syncVoiceEnabled()
+                    self.loadCallHistory()
                 default:
                     self.stopPolling()
                     self.reset()
@@ -284,21 +291,57 @@ final class DashboardStore: ObservableObject {
     private func updateCallStatus(_ status: CallStatus) {
         let previous = callStatus
         callStatus = status
-        // 新来电（从非来电变为来电）
+        // 新来电（从非来电变为来电）：弹出自定义通知卡片并响铃
         if status.isIncoming && !previous.isIncoming {
             incomingAt = Date()
-            showIncomingBanner(status)
+            IncomingCallCard.shared.show(store: self)
         }
         // 通话结束（非空闲 → 空闲）时清空来电信息
         if status.isIdle && (previous.isActive || previous.state == "unknown" || previous.isIncoming) {
             stopAudio()
             incomingAt = nil
+            IncomingCallCard.shared.hide()
+            loadCallHistory()
         }
     }
 
-    private func showIncomingBanner(_ status: CallStatus) {
-        toast = ToastItem(message: "\(status.number ?? "未知号码")", isSuccess: false, title: "来电", icon: "phone.fill")
-        scheduleToastDismiss()
+    // MARK: - 通话记录
+
+    /// 拉取通话记录（后端按最新在前返回）
+    func loadCallHistory() {
+        guard case .running = backend.state else { return }
+        Task {
+            do {
+                let list: [CallRecord] = try await APIClient().get("api/calls")
+                callHistory = list
+            } catch {
+                // 拉取失败保持旧数据
+            }
+        }
+    }
+
+    /// 清空全部通话记录
+    func clearCallHistory() {
+        Task {
+            do {
+                let _: CallClearResult = try await APIClient().send("api/calls/clear")
+                callHistory = []
+            } catch {
+                toast = ToastItem(message: "清空失败：\(error.localizedDescription)", isSuccess: false, title: "通话记录")
+            }
+        }
+    }
+
+    /// 删除单条通话记录
+    func deleteCallRecord(_ id: String) {
+        Task {
+            do {
+                let _: CallClearResult = try await APIClient().send("api/calls/delete", body: CallDeleteRequest(id: id))
+                callHistory.removeAll { $0.id == id }
+            } catch {
+                toast = ToastItem(message: "删除失败：\(error.localizedDescription)", isSuccess: false, title: "通话记录")
+            }
+        }
     }
 
     func dial(_ number: String) {

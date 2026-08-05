@@ -105,6 +105,17 @@ type app struct {
 	// 语音功能（USB 音频）开关
 	voiceEnabled bool
 
+	// 来电事件缓存（URC 驱动），供通话状态查询在 CLCC 失败/无条目时兜底
+	callMu          sync.Mutex
+	callURCIncoming bool
+	callURCNumber   string
+	callURCAt       time.Time
+
+	// 通话记录：当前会话 + 持久化归档
+	callLog       *callLog
+	callSessionMu sync.Mutex
+	callSession   *callSession
+
 	profileNotesMu     sync.Mutex
 	profileNotes       map[string]profileNote
 	profileNotesLoaded bool
@@ -252,6 +263,10 @@ func main() {
 
 	instance := &app{modem: manager, port: port, smsPollInterval: 8 * time.Second}
 	manager.SetSMSCallback(instance.recordSMS)
+	manager.SetRingCallback(instance.onURCRing)
+	manager.SetClipCallback(instance.onURCClip)
+	manager.SetHangupCallback(instance.onURCHangup)
+	manager.SetConnectCallback(instance.onURCConnect)
 	if err := manager.Start(); err != nil {
 		log.Fatalf("open modem on %s: %v", port, err)
 	}
@@ -730,6 +745,9 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/network/services", a.listNetworkServices)
 	mux.HandleFunc("PUT /api/network/services-order", a.setNetworkServicesOrder)
 	mux.HandleFunc("GET /api/call/status", a.callStatus)
+	mux.HandleFunc("GET /api/calls", a.listCalls)
+	mux.HandleFunc("POST /api/calls/clear", a.clearCalls)
+	mux.HandleFunc("POST /api/calls/delete", a.deleteCall)
 	mux.HandleFunc("POST /api/call/dial", a.callDial)
 	mux.HandleFunc("POST /api/call/answer", a.callAnswer)
 	mux.HandleFunc("POST /api/call/hangup", a.callHangup)
@@ -1301,6 +1319,7 @@ func (a *app) initSMSArchive() {
 	_ = os.MkdirAll(dir, 0o700)
 	a.dataDir = dir
 	a.smsArchive = newSMSArchive(filepath.Join(dir, "sms-archive.json"))
+	a.callLog = newCallLog(filepath.Join(dir, "call-log.json"))
 	// 恢复接管模式状态
 	if data, err := os.ReadFile(filepath.Join(dir, "sms-adopt.json")); err == nil {
 		var state struct {
@@ -1792,6 +1811,189 @@ func (a *app) check4GRoute(w http.ResponseWriter, _ *http.Request) {
 
 // MARK: - 语音与通话
 
+// callRecord 一条通话记录
+type callRecord struct {
+	ID        string    `json:"id"`
+	Direction string    `json:"direction"` // in | out
+	Number    string    `json:"number,omitempty"`
+	Answered  bool      `json:"answered"` // 来电是否接听（未接 = 来电且未接听）
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at"`
+	Duration  int64     `json:"duration"` // 秒
+}
+
+// callSession 当前进行中的通话会话
+type callSession struct {
+	direction string // in | out
+	number    string
+	startedAt time.Time
+	answered  bool
+}
+
+// callLog 通话记录归档：持久化到 Application Support 目录 JSON 文件
+type callLog struct {
+	mu    sync.Mutex
+	path  string
+	items []callRecord
+}
+
+func newCallLog(path string) *callLog {
+	l := &callLog{path: path}
+	l.load()
+	return l
+}
+
+func (l *callLog) load() {
+	data, err := os.ReadFile(l.path)
+	if err != nil {
+		return
+	}
+	_ = json.Unmarshal(data, &l.items)
+}
+
+func (l *callLog) save() {
+	data, err := json.Marshal(l.items)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(l.path, data, 0o600)
+}
+
+func (l *callLog) snapshot() []callRecord {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]callRecord, len(l.items))
+	copy(out, l.items)
+	return out
+}
+
+// add 新增记录：最新在前，上限 1000 条
+func (l *callLog) add(r callRecord) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.items = append([]callRecord{r}, l.items...)
+	if len(l.items) > 1000 {
+		l.items = l.items[:1000]
+	}
+	l.save()
+}
+
+func (l *callLog) clear() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.items = nil
+	l.save()
+}
+
+// remove 删除指定 id 的记录
+func (l *callLog) remove(id string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i, item := range l.items {
+		if item.ID == id {
+			l.items = append(l.items[:i], l.items[i+1:]...)
+			l.save()
+			return
+		}
+	}
+}
+
+// beginCall 开始一次通话会话（幂等：已有会话时不覆盖）
+func (a *app) beginCall(direction, number string) {
+	a.callSessionMu.Lock()
+	defer a.callSessionMu.Unlock()
+	if a.callSession != nil {
+		return
+	}
+	a.callSession = &callSession{direction: direction, number: number, startedAt: time.Now()}
+}
+
+// updateCallNumber 补全会话号码（+CLIP 晚于 RING 到达）
+func (a *app) updateCallNumber(number string) {
+	a.callSessionMu.Lock()
+	defer a.callSessionMu.Unlock()
+	if a.callSession != nil && number != "" {
+		a.callSession.number = number
+	}
+}
+
+// markCallAnswered 标记会话已接听
+func (a *app) markCallAnswered() {
+	a.callSessionMu.Lock()
+	defer a.callSessionMu.Unlock()
+	if a.callSession != nil {
+		a.callSession.answered = true
+	}
+}
+
+// endCall 结束会话并写入通话记录（幂等）
+func (a *app) endCall() {
+	a.callSessionMu.Lock()
+	sess := a.callSession
+	a.callSession = nil
+	a.callSessionMu.Unlock()
+	if sess == nil || a.callLog == nil {
+		return
+	}
+	rec := callRecord{
+		ID:        fmt.Sprintf("%d-%s", sess.startedAt.UnixNano(), sess.direction),
+		Direction: sess.direction,
+		Number:    sess.number,
+		Answered:  sess.answered,
+		StartedAt: sess.startedAt,
+		EndedAt:   time.Now(),
+	}
+	rec.Duration = int64(rec.EndedAt.Sub(rec.StartedAt).Seconds())
+	a.callLog.add(rec)
+	log.Printf("通话记录: %s %s %ds", rec.Direction, rec.Number, rec.Duration)
+}
+
+// onURCRing 来电 RING URC：缓存来电事件并开启会话
+func (a *app) onURCRing() {
+	a.callMu.Lock()
+	defer a.callMu.Unlock()
+	a.callURCIncoming = true
+	a.callURCAt = time.Now()
+	a.beginCall("in", "")
+}
+
+// onURCClip +CLIP URC：记录来电号码
+func (a *app) onURCClip(number string) {
+	a.callMu.Lock()
+	defer a.callMu.Unlock()
+	if number != "" {
+		a.callURCNumber = number
+	}
+	a.updateCallNumber(number)
+}
+
+// onURCHangup NO CARRIER URC：通话结束，清空来电缓存并归档
+func (a *app) onURCHangup() {
+	a.callMu.Lock()
+	defer a.callMu.Unlock()
+	a.callURCIncoming = false
+	a.callURCNumber = ""
+	a.endCall()
+}
+
+// onURCConnect CONNECT URC：外呼被接听
+func (a *app) onURCConnect() {
+	a.callMu.Lock()
+	defer a.callMu.Unlock()
+	a.callURCIncoming = false
+	a.markCallAnswered()
+}
+
+// cachedURCCallState 返回 URC 缓存中的来电状态（仅 10 秒内有效）
+func (a *app) cachedURCCallState() (callStateInfo, bool) {
+	a.callMu.Lock()
+	defer a.callMu.Unlock()
+	if a.callURCIncoming && time.Since(a.callURCAt) < 10*time.Second {
+		return callStateInfo{State: "incoming", Number: a.callURCNumber, Incoming: true}, true
+	}
+	return callStateInfo{}, false
+}
+
 type clccCall struct {
 	ID     int
 	Dir    int
@@ -1831,10 +2033,21 @@ type callStateInfo struct {
 func (a *app) currentCallState() callStateInfo {
 	resp, err := a.runATCommand("AT+CLCC", 3*time.Second)
 	if err != nil {
+		// CLCC 失败（模块忙等）时用 URC 缓存兜底
+		if info, ok := a.cachedURCCallState(); ok {
+			a.trackCallSession(info)
+			return info
+		}
 		return callStateInfo{State: "unknown"}
 	}
 	calls := parseCLCC(resp)
 	if len(calls) == 0 {
+		// CLCC 无通话条目但 URC 刚报告来电时兜底
+		if info, ok := a.cachedURCCallState(); ok {
+			a.trackCallSession(info)
+			return info
+		}
+		a.trackCallSession(callStateInfo{State: "idle"})
 		return callStateInfo{State: "idle"}
 	}
 	info := callStateInfo{}
@@ -1866,14 +2079,68 @@ func (a *app) currentCallState() callStateInfo {
 		// stat 6 = disconnected：不视为活跃通话
 	}
 	if !anyLive {
+		a.trackCallSession(callStateInfo{State: "idle"})
 		return callStateInfo{State: "idle"}
 	}
+	a.trackCallSession(info)
 	return info
+}
+
+// trackCallSession 根据轮询到的通话状态维护会话，保证通话记录不依赖 URC 回调。
+// beginCall/endCall 幂等，与 URC 回调（RING/NO CARRIER）同时启用也不会重复记录。
+func (a *app) trackCallSession(info callStateInfo) {
+	switch info.State {
+	case "incoming":
+		a.beginCall("in", info.Number)
+		a.updateCallNumber(info.Number)
+	case "dialing", "alerting":
+		a.beginCall("out", info.Number)
+		a.updateCallNumber(info.Number)
+	case "active":
+		a.markCallAnswered()
+	case "idle":
+		a.endCall()
+	}
 }
 
 // GET /api/call/status
 func (a *app) callStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, a.currentCallState())
+}
+
+// GET /api/calls 通话记录（最新在前）
+func (a *app) listCalls(w http.ResponseWriter, _ *http.Request) {
+	if a.callLog == nil {
+		writeJSON(w, http.StatusOK, []callRecord{})
+		return
+	}
+	writeJSON(w, http.StatusOK, a.callLog.snapshot())
+}
+
+// POST /api/calls/clear 清空通话记录
+func (a *app) clearCalls(w http.ResponseWriter, _ *http.Request) {
+	if a.callLog != nil {
+		a.callLog.clear()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// POST /api/calls/delete {"id":"..."} 删除单条通话记录
+func (a *app) deleteCall(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.ID == "" {
+		writeError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	if a.callLog != nil {
+		a.callLog.remove(body.ID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // POST /api/call/dial {"number":"+86138..."}
@@ -1894,6 +2161,7 @@ func (a *app) callDial(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	a.beginCall("out", body.Number)
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "response": response})
 }
 
@@ -1904,6 +2172,7 @@ func (a *app) callAnswer(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	a.markCallAnswered()
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "response": response})
 }
 
@@ -1914,6 +2183,8 @@ func (a *app) callHangup(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	// ATH 后模块通常也会发 NO CARRIER，endCall 幂等不会重复记录
+	a.endCall()
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "response": response})
 }
 
