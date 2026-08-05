@@ -1,0 +1,12 @@
+[tools]
+go = "1.26.3"
+
+[tasks.build]
+description = "构建 DJOneHubNative.app（Go 后端 + SwiftUI 前端）"
+dir = "."
+run = "sh scripts/build-app.sh"
+
+[tasks.launch]
+description = "启动已构建的 app"
+dir = "."
+run = "open dist/DJOneHubNative.app"
