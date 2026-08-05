@@ -5,6 +5,11 @@ options:
   deploymentTarget:
     macOS: "13.0"
 
+packages:
+  Awesome:
+    url: https://github.com/LiveUI/Awesome
+    from: 2.0.0
+
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -22,6 +27,8 @@ targets:
     sources:
       - path: app/Sources
       - path: app/Resources/Icons
+    dependencies:
+      - package: Awesome
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.djonehub.native

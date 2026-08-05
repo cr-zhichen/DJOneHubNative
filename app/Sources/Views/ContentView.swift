@@ -5,6 +5,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case sms = "短信"
     case esim = "eSIM 卡片"
     case debug = "调试与诊断"
+    case about = "关于与更新"
 
     var id: String { rawValue }
 
@@ -14,6 +15,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .sms: return "message.fill"
         case .esim: return "simcard.fill"
         case .debug: return "terminal.fill"
+        case .about: return "info.circle"
         }
     }
 }
@@ -21,20 +23,27 @@ enum AppSection: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @EnvironmentObject private var backend: BackendProcess
     @EnvironmentObject private var smsStore: SMSStore
+    @EnvironmentObject private var updateChecker: UpdateChecker
     @State private var selection: AppSection? = .home
+    @State private var showUpdatePrompt = false
 
     var body: some View {
         NavigationSplitView {
-            List(AppSection.allCases, selection: $selection) { section in
-                Label(section.rawValue, systemImage: section.icon)
-                    .tag(section)
+            List(selection: $selection) {
+                ForEach(AppSection.allCases) { section in
+                    Label(section.rawValue, systemImage: section.icon)
+                        .tag(section)
+                }
             }
+            .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 150, ideal: 170)
             .navigationTitle("DJOneHub")
         } detail: {
             switch selection ?? .home {
             case .home:
                 HomeView()
+            case .about:
+                AboutView()
             default:
                 if backend.state == .running {
                     sectionView
@@ -46,6 +55,30 @@ struct ContentView: View {
         .onAppear { smsStore.viewingSMS = selection == .sms }
         .onChange(of: selection) { newValue in
             smsStore.viewingSMS = newValue == .sms
+        }
+        .onChange(of: updateChecker.pendingUpdate != nil) { shown in
+            showUpdatePrompt = shown
+        }
+        .alert(
+            "发现新版本",
+            isPresented: $showUpdatePrompt,
+            presenting: updateChecker.pendingUpdate
+        ) { release in
+            Button("前往更新") {
+                if let url = updateChecker.downloadURL {
+                    NSWorkspace.shared.open(url)
+                }
+                updateChecker.dismissUpdate()
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("暂不更新", role: .cancel) {
+                updateChecker.dismissUpdate()
+            }
+            Button("跳过本次更新") {
+                updateChecker.skipUpdate(release)
+            }
+        } message: { release in
+            Text("当前版本 \(updateChecker.currentVersion)，新版本 \(release.tagName) 已发布。")
         }
         .onChange(of: smsStore.pendingOpenSender) { sender in
             // 点击短信通知：切到短信页（号码选择由短信页处理）
@@ -62,6 +95,7 @@ struct ContentView: View {
         case .sms: SMSView()
         case .esim: ESIMView()
         case .debug: DiagnosticsView()
+        case .about: AboutView()
         }
     }
 }

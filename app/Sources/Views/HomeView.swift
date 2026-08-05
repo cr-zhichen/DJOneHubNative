@@ -4,10 +4,12 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var backend: BackendProcess
     @EnvironmentObject private var store: DashboardStore
+    @EnvironmentObject private var smsStore: SMSStore
 
     @State private var showingRebootConfirm = false
     @State private var copiedValue: String?
     @State private var draggedService: Int?
+    @State private var showNotifyDeniedAlert = false
 
     private var status: DeviceStatus? { store.status }
     private var health: HealthStatus? { store.health }
@@ -21,14 +23,12 @@ struct HomeView: View {
                     if let status {
                         overviewBar
                         deviceCard
-                        HStack(alignment: .top, spacing: 12) {
-                            VStack(spacing: 12) {
-                                trafficCard
-                                smsCard
-                            }
+                        WaterfallLayout(minColumnWidth: 320, spacing: 12) {
+                            trafficCard
+                            smsCard
                             priorityCard
+                            voiceCard
                         }
-                        voiceCard
                     } else if store.statusStale {
                         VStack(spacing: 10) {
                             Image(systemName: "exclamationmark.triangle.fill")
@@ -322,7 +322,7 @@ struct HomeView: View {
             }
         }
         .padding(14)
-        .frame(maxWidth: 320, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
     }
@@ -331,16 +331,20 @@ struct HomeView: View {
 
     private var smsCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("短信保存").font(.callout.bold())
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { store.smsAdopt },
-                    set: { store.setSMSAdopt($0) }
-                ))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .labelsHidden()
+            Text("短信保存").font(.callout.bold())
+            switchRow("接管模块短信", isOn: Binding(
+                get: { store.smsAdopt },
+                set: { store.setSMSAdopt($0) }
+            ))
+            switchRow("新短信通知", isOn: $smsStore.notificationsEnabled) {
+                requestNotificationAuth()
+            }
+            if let storage = smsStore.storage {
+                HStack(spacing: 8) {
+                    Text("存储").font(.caption).foregroundStyle(.secondary)
+                    storageBadge("SIM 卡", storage.usage?["SM"])
+                    storageBadge("模块", storage.usage?["ME"])
+                }
             }
             Text(store.smsAdopt
                  ? "已接管：收到的短信将保存到本机，并自动清理 SIM 卡与模块中的原始短信。"
@@ -352,24 +356,60 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+        .alert("通知权限被拒绝", isPresented: $showNotifyDeniedAlert) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text("请在 系统设置 → 通知 中允许 DJOneHub Native 的通知后再开启。")
+        }
+    }
+
+    /// 标题在左、开关在右的一行
+    private func switchRow(_ title: String, isOn: Binding<Bool>, onChange: (() -> Void)? = nil) -> some View {
+        HStack(spacing: 8) {
+            Text(title).font(.callout)
+            Spacer()
+            Toggle("", isOn: isOn)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .onChange(of: isOn.wrappedValue) { on in
+                    if on { onChange?() }
+                }
+        }
+    }
+
+    private func storageBadge(_ title: String, _ usage: SMSStorageUsage?) -> some View {
+        guard let usage else {
+            return AnyView(EmptyView())
+        }
+        let full = usage.used >= usage.total && usage.total > 0
+        return AnyView(
+            Text("\(title) \(usage.used)/\(usage.total)")
+                .font(.caption)
+                .foregroundStyle(full ? Color.red : Color.secondary)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Capsule().fill(full ? Color.red.opacity(0.12) : Color.gray.opacity(0.12)))
+        )
+    }
+
+    private func requestNotificationAuth() {
+        Task {
+            if await !smsStore.ensureAuthorization() {
+                smsStore.notificationsEnabled = false
+                showNotifyDeniedAlert = true
+            }
+        }
     }
 
     // MARK: - 语音通话
 
     private var voiceCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 10) {
                 Text("语音通话").font(.callout.bold())
                 Spacer()
-                Toggle("", isOn: Binding(
-                    get: { store.voiceEnabled },
-                    set: { store.setVoiceEnabled($0) }
-                ))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .labelsHidden()
                 statusBadge
-                if !store.callStatus.isIdle {
+                if !store.callStatus.isIdle && store.callStatus.state != "unknown" {
                     Button("查看详情") {
                         store.showCallDetail = true
                     }
@@ -380,30 +420,24 @@ struct HomeView: View {
                     .controlSize(.small)
                 }
             }
+            switchRow("启用语音", isOn: Binding(
+                get: { store.voiceEnabled },
+                set: { store.setVoiceEnabled($0) }
+            ))
             if let number = store.callStatus.number, !number.isEmpty {
-                HStack(spacing: 10) {
-                    Text("号码").foregroundStyle(.secondary).frame(width: 56, alignment: .leading)
-                    Text(number).textSelection(.enabled)
-                    Spacer()
-                }
-                .font(.callout)
+                infoRow("号码", number)
             }
             if let incomingAt = store.incomingAt {
-                HStack(spacing: 10) {
-                    Text("来电时间").foregroundStyle(.secondary).frame(width: 56, alignment: .leading)
-                    Text(incomingAt.formatted(date: .omitted, time: .standard))
-                    Spacer()
-                }
-                .font(.callout)
+                infoRow("来电时间", incomingAt.formatted(date: .omitted, time: .standard))
             }
             if let error = store.voiceError {
                 Text(error)
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.secondary)
             }
-            Text("当前模块固件裁剪了通话音频出口（QPCMV 指令被禁用），无法传输声音。仅支持来电与通话状态的查看。")
+            Text("当前模块固件不支持通话音频传输，仅支持来电与通话状态查看。")
                 .font(.caption)
-                .foregroundStyle(.orange)
+                .foregroundStyle(.secondary)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -412,6 +446,16 @@ struct HomeView: View {
         .sheet(isPresented: $store.showCallDetail) {
             CallDetailView()
         }
+    }
+
+    /// 标签左对齐、值可复制的信息行
+    private func infoRow(_ title: String, _ value: String) -> some View {
+        HStack(spacing: 10) {
+            Text(title).foregroundStyle(.secondary).frame(width: 56, alignment: .leading)
+            Text(value).textSelection(.enabled)
+            Spacer()
+        }
+        .font(.callout)
     }
 
     private var statusBadge: some View {
@@ -568,12 +612,12 @@ struct CallDetailView: View {
             }
 
             Divider()
-            Text("当前模块固件裁剪了通话音频出口（QPCMV 指令被禁用），无法传输声音。仅支持来电与通话状态的查看。")
+            Text("当前模块固件不支持通话音频传输，仅支持来电与通话状态查看。")
                 .font(.caption)
-                .foregroundStyle(.orange)
+                .foregroundStyle(.secondary)
 
             HStack {
-                if !store.callStatus.isIdle {
+                if !store.callStatus.isIdle && store.callStatus.state != "unknown" {
                     Button("挂断", role: .destructive) {
                         store.hangup()
                         dismiss()
@@ -750,5 +794,44 @@ struct ServiceDropDelegate: DropDelegate {
     func performDrop(info: DropInfo) -> Bool {
         dragged = nil
         return true
+    }
+}
+
+/// 瀑布流布局：按可用宽度自适应分列，每个子视图放入当前最矮的一列，保持各自自然高度
+struct WaterfallLayout: Layout {
+    var minColumnWidth: CGFloat
+    var spacing: CGFloat = 12
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 780
+        let columns = columnCount(for: width)
+        let columnWidth = (width - CGFloat(columns - 1) * spacing) / CGFloat(columns)
+        var heights = [CGFloat](repeating: 0, count: columns)
+        for subview in subviews {
+            let size = subview.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil))
+            let index = heights.indices.min { heights[$0] < heights[$1] }!
+            heights[index] += size.height + spacing
+        }
+        let height = (heights.max() ?? 0) - (subviews.isEmpty ? 0 : spacing)
+        return CGSize(width: width, height: max(0, height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let columns = columnCount(for: bounds.width)
+        let columnWidth = (bounds.width - CGFloat(columns - 1) * spacing) / CGFloat(columns)
+        var xOffsets = (0..<columns).map { CGFloat($0) * (columnWidth + spacing) }
+        var heights = [CGFloat](repeating: 0, count: columns)
+        for subview in subviews {
+            let size = subview.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil))
+            let index = heights.indices.min { heights[$0] < heights[$1] }!
+            subview.place(
+                at: CGPoint(x: bounds.minX + xOffsets[index], y: bounds.minY + heights[index]),
+                proposal: ProposedViewSize(size))
+            heights[index] += size.height + spacing
+        }
+    }
+
+    private func columnCount(for width: CGFloat) -> Int {
+        max(1, Int((width + spacing) / (minColumnWidth + spacing)))
     }
 }

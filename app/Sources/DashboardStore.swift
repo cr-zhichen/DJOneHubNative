@@ -258,11 +258,8 @@ final class DashboardStore: ObservableObject {
                     "api/voice/enable", body: VoiceEnableRequest(enabled: enabled))
                 voiceSwitching = false
                 UserDefaults.standard.set(enabled, forKey: "voiceEnabled")
-                if result.needsUnplug == true {
-                    voiceError = enabled
-                        ? "已切换 USB 音频，请重新插拔模块后生效"
-                        : "已关闭 USB 音频，请重新插拔模块后生效"
-                }
+                // 模块会自行重启生效，无需用户手动重新插拔
+                voiceError = nil
             } catch {
                 voiceSwitching = false
                 voiceError = "切换失败：\(error.localizedDescription)"

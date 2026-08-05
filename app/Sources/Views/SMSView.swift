@@ -7,7 +7,6 @@ struct SMSView: View {
     @State private var showClearOptions = false
     @State private var selectedItem: SMSItem?
     @State private var selectedPhone: String?
-    @State private var showNotifyDeniedAlert = false
 
     private var conversations: [Conversation] {
         Dictionary(grouping: smsStore.items) { $0.sender ?? "未知号码" }
@@ -67,40 +66,11 @@ struct SMSView: View {
             if let count = smsStore.status?.count {
                 Text("\(count) 条").font(.callout).foregroundStyle(.secondary)
             }
-            if let storage = smsStore.storage {
-                storageBadge("SIM 卡", storage.usage?["SM"])
-                storageBadge("模块", storage.usage?["ME"])
-            }
-            if smsStore.status?.polling == true {
-                Label("轮询中", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.caption).foregroundStyle(.orange)
-            }
             Spacer()
             if let error = smsStore.lastError, !error.isEmpty {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.red)
                     .lineLimit(1)
-            }
-            Button {
-                smsStore.refresh(force: true)
-            } label: {
-                if smsStore.busy {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label("刷新", systemImage: "arrow.clockwise")
-                }
-            }
-            .disabled(smsStore.busy)
-            Button {
-                toggleNotifications()
-            } label: {
-                Label("新短信通知", systemImage: smsStore.notificationsEnabled ? "bell.fill" : "bell.slash")
-            }
-            .help(smsStore.notificationsEnabled ? "关闭新短信系统通知" : "开启新短信系统通知")
-            .alert("通知权限被拒绝", isPresented: $showNotifyDeniedAlert) {
-                Button("好", role: .cancel) {}
-            } message: {
-                Text("请在 系统设置 → 通知 中允许 DJOneHub Native 的通知后再开启。")
             }
             Button("清空短信") {
                 showClearOptions = true
@@ -111,23 +81,20 @@ struct SMSView: View {
                 Label("新短信", systemImage: "square.and.pencil")
             }
             .buttonStyle(.borderedProminent)
+            Button {
+                smsStore.refresh(force: true)
+            } label: {
+                if smsStore.busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+            .disabled(smsStore.busy)
+            .help("重新扫描 SIM 卡与模块存储")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-    }
-
-    private func storageBadge(_ title: String, _ usage: SMSStorageUsage?) -> some View {
-        guard let usage else {
-            return AnyView(EmptyView())
-        }
-        let full = usage.used >= usage.total && usage.total > 0
-        return AnyView(
-            Text("\(title) \(usage.used)/\(usage.total)")
-                .font(.caption)
-                .foregroundStyle(full ? Color.red : Color.secondary)
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(Capsule().fill(full ? Color.red.opacity(0.12) : Color.gray.opacity(0.12)))
-        )
     }
 
     /// 点击通知后打开指定号码的会话
@@ -135,19 +102,6 @@ struct SMSView: View {
         guard let sender = smsStore.pendingOpenSender else { return }
         selectedPhone = sender
         smsStore.consumeOpenRequest()
-    }
-
-    private func toggleNotifications() {
-        let enabling = !smsStore.notificationsEnabled
-        smsStore.notificationsEnabled = enabling
-        if enabling {
-            Task {
-                if await !smsStore.ensureAuthorization() {
-                    smsStore.notificationsEnabled = false
-                    showNotifyDeniedAlert = true
-                }
-            }
-        }
     }
 
     // MARK: - 会话列表

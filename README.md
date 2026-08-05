@@ -61,7 +61,7 @@ mise run clean              # 清理 build/ 与 dist/
 mise run backend:test / backend:vet / backend:tidy
 ```
 
-需要：`mise`、`pkg-config`、`libusb`（brew）、Command Line Tools（swiftc）。不依赖完整 Xcode。发行版同时提供 universal / arm64 / x86_64 三种包。
+需要：`mise`、Xcode（26 或更新）、`pkg-config`、`libusb`（brew）。发行版同时提供 universal / arm64 / x86_64 三种 DMG。
 
 ## 运行
 

@@ -8,6 +8,7 @@ struct DJOneHubNativeApp: App {
     @StateObject private var backend = BackendProcess.shared
     @StateObject private var store = DashboardStore(backend: BackendProcess.shared)
     @StateObject private var smsStore = SMSStore.shared
+    @StateObject private var updateChecker = UpdateChecker.shared
 
     var body: some Scene {
         WindowGroup {
@@ -15,7 +16,11 @@ struct DJOneHubNativeApp: App {
                 .environmentObject(backend)
                 .environmentObject(store)
                 .environmentObject(smsStore)
+                .environmentObject(updateChecker)
                 .frame(minWidth: 760, minHeight: 480)
+                .task {
+                    await updateChecker.autoCheckIfNeeded()
+                }
         }
         .windowStyle(.titleBar)
     }

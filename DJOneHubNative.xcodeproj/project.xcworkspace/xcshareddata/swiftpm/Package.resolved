@@ -1,0 +1,15 @@
+{
+  "originHash" : "274ca3f213fb18c7ff31b1a6f45dd09673b5e0485c615f71d9d38920ed6b9c32",
+  "pins" : [
+    {
+      "identity" : "awesome",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/LiveUI/Awesome",
+      "state" : {
+        "revision" : "40c68d0ca2b143c1118e636518706a4b8332777b",
+        "version" : "2.4.0"
+      }
+    }
+  ],
+  "version" : 3
+}

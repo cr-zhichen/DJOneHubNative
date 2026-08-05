@@ -13,7 +13,7 @@ DJOneHubNative.app
 - **前端**：SwiftUI（`app/Sources/`）
 - **通信**：Unix domain socket（`~/Library/Application Support/DJOneHubNative/djonehub.sock`），Swift 侧自定义 `URLProtocol` 以 `http+unix://` 协议走 URLSession
 - **后端**：Go（`backend/`），监听支持 `unix:/path`（`listenWith`），硬件逻辑（libusb/QMI/eUICC/短信）来自原 DJOneHub
-- **构建**：`scripts/build-app.sh`，仅需 CLT（swiftc）+ Go + brew libusb/pkg-config，不依赖完整 Xcode
+- **构建**：`xcodebuild`（Xcode 26+），Go 后端由工程的 post-build 脚本随 Xcode 构建一并编译嵌入；CI 见 `.github/workflows/release.yml`
 
 ## 关键源码文件
 
@@ -63,8 +63,8 @@ DJOneHubNative.app
 
 ## 踩坑记录
 
-1. **Go 端 dateDecodingStrategy**：Go time.Time 输出 RFC3339Nano（可能带小数秒），Swift 需自定义日期解析（ISO8601 带/不带小数秒都试）
-2. **swiftc 编译**：ViewBuilder 里不能直接 for 循环（用 ForEach）；`onChange` 双参数版本需 macOS 14+（目标 13 用单参数）；超长表达式导致编译器 type-check 超时（抽子视图）
+1. **日期解析**：Go time.Time 输出 RFC3339Nano（可能带小数秒），Swift 需自定义日期解析（ISO8601 带/不带小数秒都试）
+2. **SwiftUI 编译**：ViewBuilder 里不能直接 for 循环（用 ForEach）；`onChange` 双参数版本需 macOS 14+（目标 13 用单参数）；超长表达式导致编译器 type-check 超时（抽子视图）
 3. **@main 命令行程序**：顶层表达式 + semaphore 在 `-parse-as-library` 模式会卡死（测试工具用 main.swift 顶层代码模式）
 4. **List 在 ScrollView 内**：macOS 渲染不可靠（空白/塌陷），用 VStack+ForEach 替代
 5. **AudioBufferList**：Swift 中 `mBuffers` 不是数组，用 `UnsafeMutableAudioBufferListPointer` 遍历；IOProc 参数是非 Optional 指针（可判 nil 但不能 if let）
@@ -74,11 +74,13 @@ DJOneHubNative.app
 ## 构建
 
 ```sh
-./scripts/build-app.sh
-# 产物：dist/DJOneHubNative.app
+mise run build               # xcodebuild 构建 .app 并输出到 dist/
+mise run build:universal     # universal（arm64 + x86_64）
+mise run build:arm64 / build:x86_64
+mise run launch              # 启动已构建的 app
 ```
 
-需要：Go 1.26+、pkg-config、libusb（brew）、Command Line Tools（swiftc）。不依赖完整 Xcode。
+需要：Xcode（26 或更新，编译 `AppIcon.icon` 与 SwiftUI）、Go 1.26+、pkg-config、libusb（brew）。
 
 ## 测试
 
