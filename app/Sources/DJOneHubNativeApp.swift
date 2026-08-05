@@ -32,6 +32,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        // App 在前台时也弹出横幅（macOS 默认前台通知静默进通知中心）
+        completionHandler([.banner, .sound, .list])
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {

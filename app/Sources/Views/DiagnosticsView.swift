@@ -1,75 +1,53 @@
 import SwiftUI
 import UserNotifications
 
-/// 调试与诊断：网络诊断信息 + AT 指令调试
+/// 调试与诊断：按功能分页组织（网络诊断 / AT 调试 / 通知调试），
+/// 后续新增调试功能时新增一个 tab 及对应子视图即可，互不影响。
 struct DiagnosticsView: View {
+    enum DebugTab: String, CaseIterable, Identifiable {
+        case network = "网络诊断"
+        case at = "AT 调试"
+        case notify = "通知调试"
+
+        var id: String { rawValue }
+    }
+
+    @State private var tab: DebugTab = .network
+
+    var body: some View {
+        TabView(selection: $tab) {
+            DiagnosticNetworkView()
+                .tabItem { Label(DebugTab.network.rawValue, systemImage: "network") }
+                .tag(DebugTab.network)
+            DiagnosticATView()
+                .tabItem { Label(DebugTab.at.rawValue, systemImage: "terminal") }
+                .tag(DebugTab.at)
+            DiagnosticNotifyView()
+                .tabItem { Label(DebugTab.notify.rawValue, systemImage: "bell") }
+                .tag(DebugTab.notify)
+        }
+        .navigationTitle("调试与诊断")
+    }
+}
+
+// MARK: - 网络诊断
+
+struct DiagnosticNetworkView: View {
     @EnvironmentObject private var backend: BackendProcess
-    @EnvironmentObject private var smsStore: SMSStore
 
     @State private var diagnostic: NetworkDiagnostic?
     @State private var diagnosticError: String?
-    @State private var showDiagnostic = false
-
-    @State private var command = ""
-    @State private var history: [ATEntry] = []
-    @State private var atBusy = false
-    @State private var atError: String?
-
-    @State private var notifyAuth: String?
-    @State private var notifyFeedback: String?
-    /// 已授权但通知样式被系统设为"无"（静默，不弹横幅）
-    @State private var notifyBannerOff = false
-
-    private let quickCommands = ["AT", "AT+CSQ", "AT+COPS?", "AT+CPIN?", "AT+CNUM", "AT+QCFG=\"usbnet\""]
 
     var body: some View {
         VStack(spacing: 0) {
-            diagnosticSection
-            Divider()
-            atHeader
-            Divider()
-            outputArea
-            Divider()
-            inputBar
-        }
-        .navigationTitle("调试与诊断")
-        .onAppear {
-            loadDiagnostic()
-            loadNotifyAuth()
-        }
-        .sheet(isPresented: $showDiagnostic) {
-            DiagnosticDetailView(diagnostic: diagnostic, error: diagnosticError)
-        }
-    }
-
-    // MARK: - 网络诊断
-
-    private var diagnosticSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+            HStack {
                 Text("网络诊断").font(.headline)
                 if let diagnostic, let errors = diagnostic.errors, !errors.isEmpty {
-                    Text("部分命令失败").font(.caption).foregroundStyle(.orange)
+                    Label("部分命令失败", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
                 Spacer()
-                Button("模拟通知") {
-                    simulateNotify()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("直接发送一条测试通知，验证新短信系统通知是否正常工作")
-                if let notifyAuth {
-                    Text("通知\(notifyAuth)")
-                        .font(.caption)
-                        .foregroundStyle(notifyAuth == "已开启" ? Color.green : Color.orange)
-                }
-                if notifyBannerOff {
-                    Button("打开通知设置") {
-                        openNotifySettings()
-                    }
-                    .controlSize(.small)
-                    .help("在系统设置中将通知样式改为横幅，通知才会弹出")
-                }
                 Button {
                     loadDiagnostic()
                 } label: {
@@ -77,68 +55,116 @@ struct DiagnosticsView: View {
                 }
                 .controlSize(.small)
                 .help("重新采集诊断信息")
-                Button("查看详情") {
-                    showDiagnostic = true
+            }
+            .padding(16)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let diagnostic {
+                        detailRows(for: diagnostic)
+                    } else if let diagnosticError {
+                        Text(diagnosticError).font(.callout).foregroundStyle(.secondary)
+                    } else {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("读取诊断信息…").foregroundStyle(.secondary)
+                        }
+                    }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .font(.callout)
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let notifyFeedback {
-                Text(notifyFeedback)
-                    .font(.caption)
-                    .foregroundStyle(notifyFeedback.contains("成功") || notifyFeedback.contains("已发送") ? Color.secondary : Color.red)
-            }
-            if let diagnostic {
-                Text(summaryText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            } else if let diagnosticError {
-                Text(diagnosticError).font(.callout).foregroundStyle(.secondary)
-            } else {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("读取诊断信息…").foregroundStyle(.secondary)
-                }
-            }
+            .scrollIndicators(.visible)
         }
-        .padding(14)
+        .onAppear { loadDiagnostic() }
     }
 
-    private var summaryText: String {
-        guard let diagnostic else { return "-" }
-        var parts: [String] = []
-        if let mode = diagnostic.usbnetMode {
-            parts.append("网卡模式 \(mode)")
+    private func detailRows(for diagnostic: NetworkDiagnostic) -> some View {
+        Group {
+            detailRow("USB 网卡模式", diagnostic.usbnetMode ?? "-")
+            if let usbcfg = diagnostic.usbcfg {
+                detailRow("USB 配置", usbcfg)
+            }
+            if let present = diagnostic.usbNetworkPresent {
+                detailRow("USB 网络接口", present ? "存在" : "不存在")
+            }
+            if let route = diagnostic.defaultRoute {
+                detailRow("默认出口", "\(route.interface ?? "-") → \(route.gateway ?? "-")")
+            }
+            ForEach(diagnostic.macInterfaces ?? [], id: \.name) { iface in
+                detailRow("网络接口", "\(iface.name ?? "-")（\(iface.kind ?? "-")，\(iface.status ?? "-")）\(iface.ipv4 ?? "")")
+            }
+            ForEach(diagnostic.pdpContexts ?? [], id: \.id) { ctx in
+                detailRow("PDP 上下文 \(ctx.id ?? 0)", "\(ctx.pdn ?? "-") \(ctx.apn ?? "-")")
+            }
+            if let addresses = diagnostic.pdpAddresses, !addresses.isEmpty {
+                detailRow("PDP 地址", addresses.joined(separator: "、"))
+            }
+            if let errors = diagnostic.errors, !errors.isEmpty {
+                Divider()
+                ForEach(errors.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                    detailRow("\(key) 错误", value)
+                }
+            }
         }
-        if let present = diagnostic.usbNetworkPresent {
-            parts.append(present ? "USB 网络接口存在" : "无 USB 网络接口")
-        }
-        if let route = diagnostic.defaultRoute, let iface = route.interface {
-            parts.append("默认出口 \(iface)")
-        }
-        if let count = diagnostic.macInterfaces?.count {
-            parts.append("网络接口 \(count) 个")
-        }
-        if let count = diagnostic.pdpContexts?.count {
-            parts.append("PDP 上下文 \(count) 个")
-        }
-        return parts.isEmpty ? "-" : parts.joined(separator: " · ")
     }
 
-    // MARK: - AT 调试
+    private func detailRow(_ key: String, _ value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(key).foregroundStyle(.secondary).frame(width: 118, alignment: .leading)
+            Text(value).textSelection(.enabled)
+            Spacer()
+        }
+    }
 
-    private var atHeader: some View {
+    private func loadDiagnostic() {
+        guard case .running = backend.state else { return }
+        Task {
+            do {
+                let diag: NetworkDiagnostic = try await APIClient().get("api/network")
+                await MainActor.run {
+                    diagnostic = diag
+                    diagnosticError = nil
+                }
+            } catch {
+                await MainActor.run { diagnosticError = error.localizedDescription }
+            }
+        }
+    }
+}
+
+// MARK: - AT 调试
+
+struct DiagnosticATView: View {
+    @State private var command = ""
+    @State private var history: [ATEntry] = []
+    @State private var atBusy = false
+    @State private var atError: String?
+
+    private let quickCommands = ["AT", "AT+CSQ", "AT+COPS?", "AT+CPIN?", "AT+CNUM", "AT+QCFG=\"usbnet\""]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            quickBar
+            Divider()
+            outputArea
+            Divider()
+            inputBar
+        }
+    }
+
+    private var quickBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                Text("AT 调试").font(.headline)
+                Text("快捷指令").font(.caption).foregroundStyle(.secondary)
                 ForEach(quickCommands, id: \.self) { cmd in
                     Button(cmd) {
                         command = cmd
                     }
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
-                Spacer()
                 if let atError {
                     Text(atError).font(.caption).foregroundStyle(.red).lineLimit(1)
                 }
@@ -202,24 +228,82 @@ struct DiagnosticsView: View {
         .padding(16)
     }
 
-    // MARK: - 数据
-
-    private func loadDiagnostic() {
-        guard case .running = backend.state else { return }
+    private func sendAT() {
+        let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cmd.isEmpty else { return }
+        atBusy = true
+        let client = APIClient()
         Task {
             do {
-                let diag: NetworkDiagnostic = try await APIClient().get("api/network")
+                let result: ATResult = try await client.send(
+                    "api/at", body: ATRequest(command: cmd))
                 await MainActor.run {
-                    diagnostic = diag
-                    diagnosticError = nil
+                    history.append(ATEntry(command: cmd, response: result.response ?? ""))
+                    atBusy = false
+                    atError = nil
                 }
             } catch {
-                await MainActor.run { diagnosticError = error.localizedDescription }
+                await MainActor.run {
+                    history.append(ATEntry(command: cmd, response: "错误：\(error.localizedDescription)", isError: true))
+                    atBusy = false
+                    atError = error.localizedDescription
+                }
             }
         }
+        command = ""
     }
+}
 
-    // MARK: - 通知调试
+// MARK: - 通知调试
+
+struct DiagnosticNotifyView: View {
+    @EnvironmentObject private var smsStore: SMSStore
+
+    @State private var notifyAuth: String?
+    @State private var notifyFeedback: String?
+    /// 已授权但通知样式被系统设为"无"（静默，不弹横幅）
+    @State private var notifyBannerOff = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("通知调试").font(.headline)
+
+            HStack(spacing: 8) {
+                Text("通知权限")
+                if let notifyAuth {
+                    Text(notifyAuth)
+                        .font(.callout)
+                        .foregroundStyle(notifyAuth == "已开启" ? Color.green : Color.orange)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+                if notifyBannerOff {
+                    Button("打开通知设置") {
+                        openNotifySettings()
+                    }
+                    .controlSize(.small)
+                    .help("在系统设置中将通知样式改为横幅，通知才会弹出")
+                }
+            }
+
+            if let notifyFeedback {
+                Text(notifyFeedback)
+                    .font(.caption)
+                    .foregroundStyle(notifyFeedback.contains("成功") || notifyFeedback.contains("已发送") ? Color.secondary : Color.red)
+            }
+
+            Button {
+                simulateNotify()
+            } label: {
+                Label("模拟通知", systemImage: "bell.badge")
+            }
+            .buttonStyle(.bordered)
+            .help("直接发送一条测试通知，验证新短信系统通知是否正常工作")
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear { loadNotifyAuth() }
+    }
 
     private func loadNotifyAuth() {
         Task {
@@ -252,32 +336,9 @@ struct DiagnosticsView: View {
             loadNotifyAuth()
         }
     }
-
-    private func sendAT() {
-        let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cmd.isEmpty else { return }
-        atBusy = true
-        let client = APIClient()
-        Task {
-            do {
-                let result: ATResult = try await client.send(
-                    "api/at", body: ATRequest(command: cmd))
-                await MainActor.run {
-                    history.append(ATEntry(command: cmd, response: result.response ?? ""))
-                    atBusy = false
-                    atError = nil
-                }
-            } catch {
-                await MainActor.run {
-                    history.append(ATEntry(command: cmd, response: "错误：\(error.localizedDescription)", isError: true))
-                    atBusy = false
-                    atError = error.localizedDescription
-                }
-            }
-        }
-        command = ""
-    }
 }
+
+// MARK: - AT 记录
 
 struct ATEntry: Identifiable {
     let id = UUID()
@@ -306,76 +367,5 @@ struct ATEntryRow: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(entry.isError ? Color.red.opacity(0.08) : Color.accentColor.opacity(0.05)))
         .padding(.vertical, 3)
-    }
-}
-
-/// 网络诊断详情弹窗（内容可竖向滚动）
-struct DiagnosticDetailView: View {
-    @Environment(\.dismiss) private var dismiss
-    let diagnostic: NetworkDiagnostic?
-    let error: String?
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("网络诊断").font(.headline)
-                Spacer()
-                Button("完成") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding(16)
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let diagnostic {
-                        detailRow("USB 网卡模式", diagnostic.usbnetMode ?? "-")
-                        if let usbcfg = diagnostic.usbcfg {
-                            detailRow("USB 配置", usbcfg)
-                        }
-                        if let present = diagnostic.usbNetworkPresent {
-                            detailRow("USB 网络接口", present ? "存在" : "不存在")
-                        }
-                        if let route = diagnostic.defaultRoute {
-                            detailRow("默认出口", "\(route.interface ?? "-") → \(route.gateway ?? "-")")
-                        }
-                        ForEach(diagnostic.macInterfaces ?? [], id: \.name) { iface in
-                            detailRow("网络接口", "\(iface.name ?? "-")（\(iface.kind ?? "-")，\(iface.status ?? "-")）\(iface.ipv4 ?? "")")
-                        }
-                        ForEach(diagnostic.pdpContexts ?? [], id: \.id) { ctx in
-                            detailRow("PDP 上下文 \(ctx.id ?? 0)", "\(ctx.pdn ?? "-") \(ctx.apn ?? "-")")
-                        }
-                        if let addresses = diagnostic.pdpAddresses, !addresses.isEmpty {
-                            detailRow("PDP 地址", addresses.joined(separator: "、"))
-                        }
-                        if let errors = diagnostic.errors, !errors.isEmpty {
-                            Divider()
-                            ForEach(errors.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
-                                detailRow("\(key) 错误", value)
-                            }
-                        }
-                    } else if let error {
-                        Text(error).font(.callout).foregroundStyle(.secondary)
-                    } else {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("读取诊断信息…").foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .font(.callout)
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .scrollIndicators(.visible)
-        }
-        .frame(minWidth: 540, minHeight: 420, maxHeight: 620)
-    }
-
-    private func detailRow(_ key: String, _ value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(key).foregroundStyle(.secondary).frame(width: 118, alignment: .leading)
-            Text(value).textSelection(.enabled)
-            Spacer()
-        }
     }
 }

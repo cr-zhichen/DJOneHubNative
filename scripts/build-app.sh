@@ -108,16 +108,10 @@ assemble_app() {
       "${APP_DIR}/Contents/Resources/backend/djonehubd" 2>/dev/null || true
   fi
 
-  # 签名：优先使用本地开发证书（身份稳定，系统权限/通知样式不会被每次重建重置）
-  # 未找到时回退到 ad-hoc
-  SIGN_IDENTITY="ZgcCui Local Developer"
-  if security find-identity -v -p codesigning 2>/dev/null | grep -qF -- "$SIGN_IDENTITY"; then
-    echo "==> 签名: ${SIGN_IDENTITY}"
-    codesign --force --deep --sign "$SIGN_IDENTITY" "${APP_DIR}"
-  else
-    echo "==> 临时签名 (ad-hoc)"
-    codesign --force --deep --sign - "${APP_DIR}"
-  fi
+  # 签名：统一使用 ad-hoc（无身份签名，开源分发标准做法）
+  # 注意：ad-hoc 签名不受系统信任，下载的包会被 Gatekeeper 拦截（需解除隔离），
+  #       通知中心也只会显示灰色图标；本地直接构建则无此问题。
+  codesign --force --deep --sign - "${APP_DIR}"
 }
 
 resolve_libusb
