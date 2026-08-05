@@ -2,24 +2,44 @@
 go = "1.26.3"
 
 [tasks.build]
-description = "构建 .app（本机架构）"
+description = "用 Xcode 构建 .app 并输出到 dist/（本机架构）"
 dir = "."
-run = "sh scripts/build-app.sh"
+run = [
+  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS=$(uname -m) build",
+  "mkdir -p dist",
+  "rm -rf dist/DJOneHubNative-$(uname -m).app",
+  "cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-$(uname -m).app",
+]
 
 [tasks."build:arm64"]
-description = "构建 arm64 包"
+description = "构建 arm64 包到 dist/"
 dir = "."
-run = "sh scripts/build-app.sh arm64"
+run = [
+  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS=arm64 build",
+  "mkdir -p dist",
+  "rm -rf dist/DJOneHubNative-arm64.app",
+  "cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-arm64.app",
+]
 
 [tasks."build:x86_64"]
-description = "构建 x86_64 包"
+description = "构建 x86_64 包到 dist/（需设置 LIBUSB_DYLIB_X86_64）"
 dir = "."
-run = "sh scripts/build-app.sh x86_64"
+run = [
+  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS=x86_64 build",
+  "mkdir -p dist",
+  "rm -rf dist/DJOneHubNative-x86_64.app",
+  "cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-x86_64.app",
+]
 
 [tasks."build:universal"]
-description = "构建通用包（arm64 + x86_64）"
+description = "构建通用包到 dist/（需设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64 指向通用 libusb）"
 dir = "."
-run = "sh scripts/build-app.sh universal"
+run = [
+  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS='arm64 x86_64' build",
+  "mkdir -p dist",
+  "rm -rf dist/DJOneHubNative.app",
+  "cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative.app",
+]
 
 [tasks.launch]
 description = "启动已构建的 app（本机架构优先，其次通用包）"

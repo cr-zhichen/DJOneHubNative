@@ -361,6 +361,13 @@ struct HomeView: View {
             HStack {
                 Text("语音通话").font(.callout.bold())
                 Spacer()
+                Toggle("", isOn: Binding(
+                    get: { store.voiceEnabled },
+                    set: { store.setVoiceEnabled($0) }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
                 statusBadge
                 if !store.callStatus.isIdle {
                     Button("查看详情") {
@@ -388,6 +395,11 @@ struct HomeView: View {
                     Spacer()
                 }
                 .font(.callout)
+            }
+            if let error = store.voiceError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
             Text("当前模块固件裁剪了通话音频出口（QPCMV 指令被禁用），无法传输声音。仅支持来电与通话状态的查看。")
                 .font(.caption)

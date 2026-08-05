@@ -1,0 +1,116 @@
+name: DJOneHubNative
+options:
+  bundleIdPrefix: com.djonehub
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "13.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    CLANG_ENABLE_MODULES: YES
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "ZgcCui Local Developer"
+    ENABLE_APP_SANDBOX: NO
+    ENABLE_HARDENED_RUNTIME: NO
+
+targets:
+  DJOneHubNative:
+    type: application
+    platform: macOS
+    sources:
+      - path: app/Sources
+      - path: app/Resources/Icons
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.djonehub.native
+        PRODUCT_NAME: DJOneHubNative
+        INFOPLIST_FILE: app/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_OPTIMIZATION_LEVEL: "-O"
+        SWIFT_COMPILATION_MODE: wholemodule
+        COMBINE_HIDPI_IMAGES: YES
+    scheme:
+      testTargets: []
+      gatherCoverageData: false
+    postBuildScripts:
+      - name: 构建并嵌入 Go 后端
+        basedOnDependencyAnalysis: false
+        script: |
+          #!/bin/sh
+          set -eu
+
+          cd "${PROJECT_DIR}/backend"
+          export CGO_ENABLED=1 GOOS=darwin
+          export GOCACHE="${TARGET_TEMP_DIR}/gocache"
+          export PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig}"
+
+          libusb_for() {
+            case "$1" in
+              x86_64) echo "${LIBUSB_DYLIB_X86_64:-/usr/local/opt/libusb/lib/libusb-1.0.0.dylib}" ;;
+              *)      echo "${LIBUSB_DYLIB_ARM64:-/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib}" ;;
+            esac
+          }
+
+          goarch() { [ "$1" = "x86_64" ] && echo "amd64" || echo "arm64"; }
+
+          # 编译后端（按 ARCHS，支持 universal）
+          mkdir -p "${TARGET_TEMP_DIR}/backend"
+          for a in ${ARCHS}; do
+            mkdir -p "${TARGET_TEMP_DIR}/backend/${a}"
+            GOARCH="$(goarch "$a")" go build -trimpath -ldflags="-s -w" \
+              -o "${TARGET_TEMP_DIR}/backend/${a}/djonehubd" ./cmd/djonehub-macos
+          done
+
+          # 合并到 app 资源目录
+          BACKEND_DIR="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/backend"
+          rm -rf "${BACKEND_DIR}"
+          mkdir -p "${BACKEND_DIR}"
+          for a in ${ARCHS}; do
+            cp "${TARGET_TEMP_DIR}/backend/${a}/djonehubd" "${BACKEND_DIR}/djonehubd.${a}"
+          done
+          if [ "$(echo ${ARCHS} | wc -w)" -gt 1 ]; then
+            lipo -create "${BACKEND_DIR}"/djonehubd.* -output "${BACKEND_DIR}/djonehubd"
+            rm -f "${BACKEND_DIR}"/djonehubd.*
+          else
+            mv "${BACKEND_DIR}/djonehubd.${ARCHS}" "${BACKEND_DIR}/djonehubd"
+          fi
+
+          # libusb：按架构拷贝（universal 时优先用胖文件，否则 lipo 合并）并改为 @loader_path 引用
+          if [ "$(echo ${ARCHS} | wc -w)" -gt 1 ]; then
+            UB=$(libusb_for "$(echo ${ARCHS} | awk '{print $1}')")
+            FAT=0
+            if [ -f "$UB" ]; then
+              info=$(lipo -info "$UB" 2>/dev/null || true)
+              case "$info" in *"Architectures in the fat file"*) FAT=1 ;; esac
+              if [ "$FAT" = "1" ]; then
+                for a in ${ARCHS}; do
+                  echo "$info" | grep -q "$a" || { FAT=0; break; }
+                done
+              fi
+            fi
+            if [ "$FAT" = "1" ]; then
+              cp "$UB" "${BACKEND_DIR}/libusb-1.0.0.dylib"
+            else
+              FOUND=""
+              for a in ${ARCHS}; do
+                LIBUSB=$(libusb_for "$a")
+                [ -f "$LIBUSB" ] || continue
+                cp "$LIBUSB" "${BACKEND_DIR}/libusb.${a}"
+                FOUND="$a"
+              done
+              [ -n "$FOUND" ] || { echo "错误：未找到 libusb，请设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64" >&2; exit 1; }
+              lipo -create "${BACKEND_DIR}"/libusb.* -output "${BACKEND_DIR}/libusb-1.0.0.dylib"
+              rm -f "${BACKEND_DIR}"/libusb.*
+            fi
+          else
+            LIBUSB=$(libusb_for "$ARCHS")
+            [ -f "$LIBUSB" ] || { echo "错误：未找到 libusb (${LIBUSB})，请设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64" >&2; exit 1; }
+            cp "$LIBUSB" "${BACKEND_DIR}/libusb-1.0.0.dylib"
+          fi
+          old=$(otool -L "${BACKEND_DIR}/djonehubd" 2>/dev/null | awk '/libusb/ {print $1; exit}')
+          if [ -n "$old" ]; then
+            install_name_tool -change "$old" "@loader_path/libusb-1.0.0.dylib" "${BACKEND_DIR}/djonehubd" || true
+          fi

@@ -1,8 +1,10 @@
 import SwiftUI
+import UserNotifications
 
 /// 调试与诊断：网络诊断信息 + AT 指令调试
 struct DiagnosticsView: View {
     @EnvironmentObject private var backend: BackendProcess
+    @EnvironmentObject private var smsStore: SMSStore
 
     @State private var diagnostic: NetworkDiagnostic?
     @State private var diagnosticError: String?
@@ -12,6 +14,11 @@ struct DiagnosticsView: View {
     @State private var history: [ATEntry] = []
     @State private var atBusy = false
     @State private var atError: String?
+
+    @State private var notifyAuth: String?
+    @State private var notifyFeedback: String?
+    /// 已授权但通知样式被系统设为"无"（静默，不弹横幅）
+    @State private var notifyBannerOff = false
 
     private let quickCommands = ["AT", "AT+CSQ", "AT+COPS?", "AT+CPIN?", "AT+CNUM", "AT+QCFG=\"usbnet\""]
 
@@ -26,7 +33,10 @@ struct DiagnosticsView: View {
             inputBar
         }
         .navigationTitle("调试与诊断")
-        .onAppear { loadDiagnostic() }
+        .onAppear {
+            loadDiagnostic()
+            loadNotifyAuth()
+        }
         .sheet(isPresented: $showDiagnostic) {
             DiagnosticDetailView(diagnostic: diagnostic, error: diagnosticError)
         }
@@ -42,6 +52,24 @@ struct DiagnosticsView: View {
                     Text("部分命令失败").font(.caption).foregroundStyle(.orange)
                 }
                 Spacer()
+                Button("模拟通知") {
+                    simulateNotify()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("直接发送一条测试通知，验证新短信系统通知是否正常工作")
+                if let notifyAuth {
+                    Text("通知\(notifyAuth)")
+                        .font(.caption)
+                        .foregroundStyle(notifyAuth == "已开启" ? Color.green : Color.orange)
+                }
+                if notifyBannerOff {
+                    Button("打开通知设置") {
+                        openNotifySettings()
+                    }
+                    .controlSize(.small)
+                    .help("在系统设置中将通知样式改为横幅，通知才会弹出")
+                }
                 Button {
                     loadDiagnostic()
                 } label: {
@@ -54,6 +82,11 @@ struct DiagnosticsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+            }
+            if let notifyFeedback {
+                Text(notifyFeedback)
+                    .font(.caption)
+                    .foregroundStyle(notifyFeedback.contains("成功") || notifyFeedback.contains("已发送") ? Color.secondary : Color.red)
             }
             if let diagnostic {
                 Text(summaryText)
@@ -183,6 +216,40 @@ struct DiagnosticsView: View {
             } catch {
                 await MainActor.run { diagnosticError = error.localizedDescription }
             }
+        }
+    }
+
+    // MARK: - 通知调试
+
+    private func loadNotifyAuth() {
+        Task {
+            let settings = await UNUserNotificationCenter.current().notificationSettings()
+            let text: String
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral: text = "已开启"
+            case .notDetermined: text = "未授权"
+            case .denied: text = "已拒绝"
+            @unknown default: text = "未知"
+            }
+            await MainActor.run {
+                notifyAuth = text
+                notifyBannerOff = settings.authorizationStatus == .authorized && settings.alertSetting == .disabled
+            }
+        }
+    }
+
+    private func openNotifySettings() {
+        // macOS 13+：打开系统设置的通知面板
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func simulateNotify() {
+        Task {
+            notifyFeedback = "正在发送…"
+            notifyFeedback = await smsStore.simulateNotification()
+            loadNotifyAuth()
         }
     }
 

@@ -34,11 +34,22 @@ jobs:
       - name: Build apps
         env:
           PKG_CONFIG_PATH: ${{ runner.temp }}/libusb/lib/pkgconfig
-          LIBUSB_DYLIB: ${{ runner.temp }}/libusb/lib/libusb-1.0.0.dylib
+          LIBUSB_DYLIB_ARM64: ${{ runner.temp }}/libusb/lib/libusb-1.0.0.dylib
+          LIBUSB_DYLIB_X86_64: ${{ runner.temp }}/libusb/lib/libusb-1.0.0.dylib
         run: |
-          sh scripts/build-app.sh arm64
-          sh scripts/build-app.sh x86_64
-          sh scripts/build-app.sh universal
+          set -eu
+          mkdir -p dist
+          XCODE_BUILD() {
+            xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative \
+              -configuration Release -destination 'platform=macOS' \
+              -derivedDataPath build/DerivedData ARCHS="$1" CODE_SIGN_IDENTITY="-" build
+          }
+          XCODE_BUILD "arm64 x86_64"
+          cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative.app
+          XCODE_BUILD "arm64"
+          cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-arm64.app
+          XCODE_BUILD "x86_64"
+          cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-x86_64.app
 
       - name: Package
         run: |

@@ -20,6 +20,7 @@ enum AppSection: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject private var backend: BackendProcess
+    @EnvironmentObject private var smsStore: SMSStore
     @State private var selection: AppSection? = .home
 
     var body: some View {
@@ -40,6 +41,16 @@ struct ContentView: View {
                 } else {
                     ServiceOffView()
                 }
+            }
+        }
+        .onAppear { smsStore.viewingSMS = selection == .sms }
+        .onChange(of: selection) { newValue in
+            smsStore.viewingSMS = newValue == .sms
+        }
+        .onChange(of: smsStore.pendingOpenSender) { sender in
+            // 点击短信通知：切到短信页（号码选择由短信页处理）
+            if sender != nil {
+                selection = .sms
             }
         }
     }

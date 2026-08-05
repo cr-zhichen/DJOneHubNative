@@ -58,11 +58,12 @@ build_one_arch() {
     -O \
     -target "$(swifttarget "$arch")" \
     -sdk "${SDK}" \
-    -framework SwiftUI -framework AppKit -framework Combine \
+    -framework SwiftUI -framework AppKit -framework Combine -framework UserNotifications \
     -o "${out}/DJOneHubNative" \
     Sources/DJOneHubNativeApp.swift \
     Sources/BackendProcess.swift \
     Sources/DashboardStore.swift \
+    Sources/SMSStore.swift \
     Sources/AudioBridge.swift \
     Sources/UnixSocketURLProtocol.swift \
     Sources/APIClient.swift \
@@ -105,6 +106,17 @@ assemble_app() {
   if [ -n "$old" ]; then
     install_name_tool -change "$old" "@loader_path/libusb-1.0.0.dylib" \
       "${APP_DIR}/Contents/Resources/backend/djonehubd" 2>/dev/null || true
+  fi
+
+  # 签名：优先使用本地开发证书（身份稳定，系统权限/通知样式不会被每次重建重置）
+  # 未找到时回退到 ad-hoc
+  SIGN_IDENTITY="ZgcCui Local Developer"
+  if security find-identity -v -p codesigning 2>/dev/null | grep -qF -- "$SIGN_IDENTITY"; then
+    echo "==> 签名: ${SIGN_IDENTITY}"
+    codesign --force --deep --sign "$SIGN_IDENTITY" "${APP_DIR}"
+  else
+    echo "==> 临时签名 (ad-hoc)"
+    codesign --force --deep --sign - "${APP_DIR}"
   fi
 }
 

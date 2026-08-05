@@ -1,0 +1,415 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0A0B94E9FDB31B67359D0BEA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB45AD6AB93DBA1F357E5695 /* ContentView.swift */; };
+		110A8BB4EA687024D52935B3 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF20520A20CFDC1ACF07AF4 /* DiagnosticsView.swift */; };
+		37D77738BD76FD01E4729F8B /* DJOneHubNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52CB97D70CF5A0A3680E4366 /* DJOneHubNativeApp.swift */; };
+		60159F5217ABF610D1D9B6B9 /* ESIMView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2726B5DD5C2CB2DB372DDF46 /* ESIMView.swift */; };
+		7132C6870A22C6E7C3CD0A9D /* SMSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FE8CEA7FD366A18D63D79BB /* SMSView.swift */; };
+		839CB9910988FF644BF48F48 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = EF323F316D84B16D3F424AA1 /* AppIcon.icon */; };
+		86A4EF195190FD8DB8452843 /* AudioBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C06A5E003D640BB7E8549F26 /* AudioBridge.swift */; };
+		C54A1D5773A5E4D223CB08B0 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC11388FA67B835A55D6B961 /* HomeView.swift */; };
+		C65DAD302F467303D58CE553 /* DashboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E66119EDEC7816A5F417986 /* DashboardStore.swift */; };
+		C856F18A2C9A8B48080E46E6 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = C84FC7D3D21A21CC374D0541 /* Models.swift */; };
+		CCDD69D5E523420BC2C5E3EE /* SMSStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5FE558AD4FEF1919375198D /* SMSStore.swift */; };
+		DCFA455CA254BA22DCE92D89 /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = C425E69F6A5C567C97D76733 /* BackendProcess.swift */; };
+		E7EBC99E07FAFF36998EB28F /* UnixSocketURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F658F8040ABB05665E2861A /* UnixSocketURLProtocol.swift */; };
+		E9BF9071087C70A15FDCE7FF /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5511AFD27D1673297909199E /* APIClient.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1FE8CEA7FD366A18D63D79BB /* SMSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMSView.swift; sourceTree = "<group>"; };
+		2726B5DD5C2CB2DB372DDF46 /* ESIMView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ESIMView.swift; sourceTree = "<group>"; };
+		37DBF2924F3E9481FA911BAD /* DJOneHubNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DJOneHubNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		52CB97D70CF5A0A3680E4366 /* DJOneHubNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DJOneHubNativeApp.swift; sourceTree = "<group>"; };
+		5511AFD27D1673297909199E /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		5E66119EDEC7816A5F417986 /* DashboardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardStore.swift; sourceTree = "<group>"; };
+		8F658F8040ABB05665E2861A /* UnixSocketURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnixSocketURLProtocol.swift; sourceTree = "<group>"; };
+		C06A5E003D640BB7E8549F26 /* AudioBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioBridge.swift; sourceTree = "<group>"; };
+		C425E69F6A5C567C97D76733 /* BackendProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcess.swift; sourceTree = "<group>"; };
+		C5FE558AD4FEF1919375198D /* SMSStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMSStore.swift; sourceTree = "<group>"; };
+		C84FC7D3D21A21CC374D0541 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		DB45AD6AB93DBA1F357E5695 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		DC11388FA67B835A55D6B961 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		EF323F316D84B16D3F424AA1 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		FCF20520A20CFDC1ACF07AF4 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		2C6AF3FEE0D11E900069B1A3 = {
+			isa = PBXGroup;
+			children = (
+				470DC5C808A9FE6DC8B3DBE1 /* app */,
+				A82E1B692B5F694FE3118B0D /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		470DC5C808A9FE6DC8B3DBE1 /* app */ = {
+			isa = PBXGroup;
+			children = (
+				FFA71028079A9414E7B99A13 /* Resources */,
+				526085C3EEE4829B060E1972 /* Sources */,
+			);
+			path = app;
+			sourceTree = "<group>";
+		};
+		526085C3EEE4829B060E1972 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				5511AFD27D1673297909199E /* APIClient.swift */,
+				C06A5E003D640BB7E8549F26 /* AudioBridge.swift */,
+				C425E69F6A5C567C97D76733 /* BackendProcess.swift */,
+				5E66119EDEC7816A5F417986 /* DashboardStore.swift */,
+				52CB97D70CF5A0A3680E4366 /* DJOneHubNativeApp.swift */,
+				C84FC7D3D21A21CC374D0541 /* Models.swift */,
+				C5FE558AD4FEF1919375198D /* SMSStore.swift */,
+				8F658F8040ABB05665E2861A /* UnixSocketURLProtocol.swift */,
+				CA27A747353F02B60264B190 /* Views */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		988F2BB1DB8D56E0622528C1 /* Icons */ = {
+			isa = PBXGroup;
+			children = (
+				EF323F316D84B16D3F424AA1 /* AppIcon.icon */,
+			);
+			path = Icons;
+			sourceTree = "<group>";
+		};
+		A82E1B692B5F694FE3118B0D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				37DBF2924F3E9481FA911BAD /* DJOneHubNative.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CA27A747353F02B60264B190 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				DB45AD6AB93DBA1F357E5695 /* ContentView.swift */,
+				FCF20520A20CFDC1ACF07AF4 /* DiagnosticsView.swift */,
+				2726B5DD5C2CB2DB372DDF46 /* ESIMView.swift */,
+				DC11388FA67B835A55D6B961 /* HomeView.swift */,
+				1FE8CEA7FD366A18D63D79BB /* SMSView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		FFA71028079A9414E7B99A13 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				988F2BB1DB8D56E0622528C1 /* Icons */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		9C2BA06E8BC8022EFF054646 /* DJOneHubNative */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E4C2A4A7E58E6F2974AF1E3B /* Build configuration list for PBXNativeTarget "DJOneHubNative" */;
+			buildPhases = (
+				65B3CF707926F77FD797DD77 /* Sources */,
+				BAA31CE185B03B8CA7CCB566 /* Resources */,
+				21691655CA159507BA6E16AE /* 构建并嵌入 Go 后端 */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DJOneHubNative;
+			packageProductDependencies = (
+			);
+			productName = DJOneHubNative;
+			productReference = 37DBF2924F3E9481FA911BAD /* DJOneHubNative.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A780D2FAC0CF11143E1D4946 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					9C2BA06E8BC8022EFF054646 = {
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = E88AC3EFF70586BB9BA05FD3 /* Build configuration list for PBXProject "DJOneHubNative" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 2C6AF3FEE0D11E900069B1A3;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A82E1B692B5F694FE3118B0D /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				9C2BA06E8BC8022EFF054646 /* DJOneHubNative */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		BAA31CE185B03B8CA7CCB566 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				839CB9910988FF644BF48F48 /* AppIcon.icon in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		21691655CA159507BA6E16AE /* 构建并嵌入 Go 后端 */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "构建并嵌入 Go 后端";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\nset -eu\n\ncd \"${PROJECT_DIR}/backend\"\nexport CGO_ENABLED=1 GOOS=darwin\nexport GOCACHE=\"${TARGET_TEMP_DIR}/gocache\"\nexport PKG_CONFIG_PATH=\"${PKG_CONFIG_PATH:-/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig}\"\n\nlibusb_for() {\n  case \"$1\" in\n    x86_64) echo \"${LIBUSB_DYLIB_X86_64:-/usr/local/opt/libusb/lib/libusb-1.0.0.dylib}\" ;;\n    *)      echo \"${LIBUSB_DYLIB_ARM64:-/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib}\" ;;\n  esac\n}\n\ngoarch() { [ \"$1\" = \"x86_64\" ] && echo \"amd64\" || echo \"arm64\"; }\n\n# 编译后端（按 ARCHS，支持 universal）\nmkdir -p \"${TARGET_TEMP_DIR}/backend\"\nfor a in ${ARCHS}; do\n  mkdir -p \"${TARGET_TEMP_DIR}/backend/${a}\"\n  GOARCH=\"$(goarch \"$a\")\" go build -trimpath -ldflags=\"-s -w\" \\\n    -o \"${TARGET_TEMP_DIR}/backend/${a}/djonehubd\" ./cmd/djonehub-macos\ndone\n\n# 合并到 app 资源目录\nBACKEND_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/backend\"\nrm -rf \"${BACKEND_DIR}\"\nmkdir -p \"${BACKEND_DIR}\"\nfor a in ${ARCHS}; do\n  cp \"${TARGET_TEMP_DIR}/backend/${a}/djonehubd\" \"${BACKEND_DIR}/djonehubd.${a}\"\ndone\nif [ \"$(echo ${ARCHS} | wc -w)\" -gt 1 ]; then\n  lipo -create \"${BACKEND_DIR}\"/djonehubd.* -output \"${BACKEND_DIR}/djonehubd\"\n  rm -f \"${BACKEND_DIR}\"/djonehubd.*\nelse\n  mv \"${BACKEND_DIR}/djonehubd.${ARCHS}\" \"${BACKEND_DIR}/djonehubd\"\nfi\n\n# libusb：按架构拷贝（universal 时优先用胖文件，否则 lipo 合并）并改为 @loader_path 引用\nif [ \"$(echo ${ARCHS} | wc -w)\" -gt 1 ]; then\n  UB=$(libusb_for \"$(echo ${ARCHS} | awk '{print $1}')\")\n  FAT=0\n  if [ -f \"$UB\" ]; then\n    info=$(lipo -info \"$UB\" 2>/dev/null || true)\n    case \"$info\" in *\"Architectures in the fat file\"*) FAT=1 ;; esac\n    if [ \"$FAT\" = \"1\" ]; then\n      for a in ${ARCHS}; do\n        echo \"$info\" | grep -q \"$a\" || { FAT=0; break; }\n      done\n    fi\n  fi\n  if [ \"$FAT\" = \"1\" ]; then\n    cp \"$UB\" \"${BACKEND_DIR}/libusb-1.0.0.dylib\"\n  else\n    FOUND=\"\"\n    for a in ${ARCHS}; do\n      LIBUSB=$(libusb_for \"$a\")\n      [ -f \"$LIBUSB\" ] || continue\n      cp \"$LIBUSB\" \"${BACKEND_DIR}/libusb.${a}\"\n      FOUND=\"$a\"\n    done\n    [ -n \"$FOUND\" ] || { echo \"错误：未找到 libusb，请设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64\" >&2; exit 1; }\n    lipo -create \"${BACKEND_DIR}\"/libusb.* -output \"${BACKEND_DIR}/libusb-1.0.0.dylib\"\n    rm -f \"${BACKEND_DIR}\"/libusb.*\n  fi\nelse\n  LIBUSB=$(libusb_for \"$ARCHS\")\n  [ -f \"$LIBUSB\" ] || { echo \"错误：未找到 libusb (${LIBUSB})，请设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64\" >&2; exit 1; }\n  cp \"$LIBUSB\" \"${BACKEND_DIR}/libusb-1.0.0.dylib\"\nfi\nold=$(otool -L \"${BACKEND_DIR}/djonehubd\" 2>/dev/null | awk '/libusb/ {print $1; exit}')\nif [ -n \"$old\" ]; then\n  install_name_tool -change \"$old\" \"@loader_path/libusb-1.0.0.dylib\" \"${BACKEND_DIR}/djonehubd\" || true\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		65B3CF707926F77FD797DD77 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E9BF9071087C70A15FDCE7FF /* APIClient.swift in Sources */,
+				86A4EF195190FD8DB8452843 /* AudioBridge.swift in Sources */,
+				DCFA455CA254BA22DCE92D89 /* BackendProcess.swift in Sources */,
+				0A0B94E9FDB31B67359D0BEA /* ContentView.swift in Sources */,
+				37D77738BD76FD01E4729F8B /* DJOneHubNativeApp.swift in Sources */,
+				C65DAD302F467303D58CE553 /* DashboardStore.swift in Sources */,
+				110A8BB4EA687024D52935B3 /* DiagnosticsView.swift in Sources */,
+				60159F5217ABF610D1D9B6B9 /* ESIMView.swift in Sources */,
+				C54A1D5773A5E4D223CB08B0 /* HomeView.swift in Sources */,
+				C856F18A2C9A8B48080E46E6 /* Models.swift in Sources */,
+				CCDD69D5E523420BC2C5E3EE /* SMSStore.swift in Sources */,
+				7132C6870A22C6E7C3CD0A9D /* SMSView.swift in Sources */,
+				E7EBC99E07FAFF36998EB28F /* UnixSocketURLProtocol.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		7F3619077885357E2158B8ED /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "ZgcCui Local Developer";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		895A9616372F02D13B40C33D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = app/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.djonehub.native;
+				PRODUCT_NAME = DJOneHubNative;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Debug;
+		};
+		995A489014DA0B5ED60911D6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "ZgcCui Local Developer";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		BBE6B47813C7910EE82E68C5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = app/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.djonehub.native;
+				PRODUCT_NAME = DJOneHubNative;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E4C2A4A7E58E6F2974AF1E3B /* Build configuration list for PBXNativeTarget "DJOneHubNative" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				895A9616372F02D13B40C33D /* Debug */,
+				BBE6B47813C7910EE82E68C5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E88AC3EFF70586BB9BA05FD3 /* Build configuration list for PBXProject "DJOneHubNative" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				995A489014DA0B5ED60911D6 /* Debug */,
+				7F3619077885357E2158B8ED /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A780D2FAC0CF11143E1D4946 /* Project object */;
+}

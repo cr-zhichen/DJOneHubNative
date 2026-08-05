@@ -2,21 +2,15 @@ import SwiftUI
 
 /// 短信会话：左侧会话列表（按号码分组），右侧聊天界面
 struct SMSView: View {
-    @EnvironmentObject private var backend: BackendProcess
-    @State private var items: [SMSItem] = []
-    @State private var status: SMSStatus?
-    @State private var storage: SMSStorageResponse?
-    @State private var errorMessage: String?
+    @EnvironmentObject private var smsStore: SMSStore
     @State private var showCompose = false
     @State private var showClearOptions = false
     @State private var selectedItem: SMSItem?
     @State private var selectedPhone: String?
-    @State private var busy = false
-
-    private let timer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
+    @State private var showNotifyDeniedAlert = false
 
     private var conversations: [Conversation] {
-        Dictionary(grouping: items) { $0.sender ?? "未知号码" }
+        Dictionary(grouping: smsStore.items) { $0.sender ?? "未知号码" }
             .map { Conversation(phone: $0.key, messages: $0.value.sorted { $0.timestamp < $1.timestamp }) }
             .sorted { $0.lastTimestamp > $1.lastTimestamp }
     }
@@ -37,23 +31,30 @@ struct SMSView: View {
             }
         }
         .navigationTitle("短信")
-        .onAppear { refresh() }
-        .onReceive(timer) { _ in refresh() }
-        .sheet(isPresented: $showCompose) { ComposeSMSView(onSent: { refresh(force: true) }) }
+        .onAppear {
+            smsStore.refresh()
+            openPendingConversation()
+        }
+        .onChange(of: smsStore.pendingOpenSender) { sender in
+            if sender != nil {
+                openPendingConversation()
+            }
+        }
+        .sheet(isPresented: $showCompose) { ComposeSMSView(onSent: { smsStore.refresh(force: true) }) }
         .sheet(item: $selectedItem) { item in
             SMSDetailView(item: item, onDelete: { deleted in
                 if deleted {
                     selectedItem = nil
-                    refresh(force: true)
+                    smsStore.refresh(force: true)
                 }
             }, onReply: {
                 selectedItem = nil
                 selectedPhone = item.sender
-                refresh(force: true)
+                smsStore.refresh(force: true)
             })
         }
         .sheet(isPresented: $showClearOptions) {
-            SMSClearView(onDone: { refresh(force: true) })
+            SMSClearView(onDone: { smsStore.refresh(force: true) })
         }
     }
 
@@ -63,33 +64,44 @@ struct SMSView: View {
         HStack(spacing: 10) {
             Text("短信")
                 .font(.headline)
-            if let count = status?.count {
+            if let count = smsStore.status?.count {
                 Text("\(count) 条").font(.callout).foregroundStyle(.secondary)
             }
-            if let storage {
+            if let storage = smsStore.storage {
                 storageBadge("SIM 卡", storage.usage?["SM"])
                 storageBadge("模块", storage.usage?["ME"])
             }
-            if status?.polling == true {
+            if smsStore.status?.polling == true {
                 Label("轮询中", systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption).foregroundStyle(.orange)
             }
             Spacer()
-            if let error = status?.lastPollError, !error.isEmpty {
+            if let error = smsStore.lastError, !error.isEmpty {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.red)
                     .lineLimit(1)
             }
             Button {
-                refresh(force: true)
+                smsStore.refresh(force: true)
             } label: {
-                if busy {
+                if smsStore.busy {
                     ProgressView().controlSize(.small)
                 } else {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
             }
-            .disabled(busy)
+            .disabled(smsStore.busy)
+            Button {
+                toggleNotifications()
+            } label: {
+                Label("新短信通知", systemImage: smsStore.notificationsEnabled ? "bell.fill" : "bell.slash")
+            }
+            .help(smsStore.notificationsEnabled ? "关闭新短信系统通知" : "开启新短信系统通知")
+            .alert("通知权限被拒绝", isPresented: $showNotifyDeniedAlert) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text("请在 系统设置 → 通知 中允许 DJOneHub Native 的通知后再开启。")
+            }
             Button("清空短信") {
                 showClearOptions = true
             }
@@ -118,6 +130,26 @@ struct SMSView: View {
         )
     }
 
+    /// 点击通知后打开指定号码的会话
+    private func openPendingConversation() {
+        guard let sender = smsStore.pendingOpenSender else { return }
+        selectedPhone = sender
+        smsStore.consumeOpenRequest()
+    }
+
+    private func toggleNotifications() {
+        let enabling = !smsStore.notificationsEnabled
+        smsStore.notificationsEnabled = enabling
+        if enabling {
+            Task {
+                if await !smsStore.ensureAuthorization() {
+                    smsStore.notificationsEnabled = false
+                    showNotifyDeniedAlert = true
+                }
+            }
+        }
+    }
+
     // MARK: - 会话列表
 
     private var conversationList: some View {
@@ -140,7 +172,7 @@ struct SMSView: View {
             ConversationDetailView(
                 conversation: conversation,
                 onOpenMessage: { selectedItem = $0 },
-                onSent: { refresh(force: true) })
+                onSent: { smsStore.refresh(force: true) })
         } else {
             VStack(spacing: 10) {
                 Image(systemName: "message")
@@ -149,31 +181,6 @@ struct SMSView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    // MARK: - 数据
-
-    private func refresh(force: Bool = false) {
-        guard case .running = backend.state else { return }
-        let client = APIClient()
-        Task {
-            do {
-                let st: SMSStatus = try await client.get("api/sms/status")
-                await MainActor.run { status = st; errorMessage = nil }
-                if force || items.isEmpty {
-                    let _: SMSRefreshResult = try await client.send("api/sms/refresh")
-                }
-                let list: [SMSItem] = try await client.get("api/sms")
-                let storageRes: SMSStorageResponse? = try? await client.get("api/sms/storage")
-                await MainActor.run {
-                    items = list
-                    storage = storageRes
-                    busy = false
-                }
-            } catch {
-                await MainActor.run { errorMessage = error.localizedDescription }
-            }
         }
     }
 }
