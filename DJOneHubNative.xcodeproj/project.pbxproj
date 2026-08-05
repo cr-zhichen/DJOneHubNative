@@ -16,6 +16,7 @@
 		60159F5217ABF610D1D9B6B9 /* ESIMView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2726B5DD5C2CB2DB372DDF46 /* ESIMView.swift */; };
 		7132C6870A22C6E7C3CD0A9D /* SMSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FE8CEA7FD366A18D63D79BB /* SMSView.swift */; };
 		839CB9910988FF644BF48F48 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = EF323F316D84B16D3F424AA1 /* AppIcon.icon */; };
+		84F1E167D8AD5C0CFFD5A7A0 /* CallHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E8A0F8DB72294EB7FB5DE2 /* CallHistoryView.swift */; };
 		86A4EF195190FD8DB8452843 /* AudioBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C06A5E003D640BB7E8549F26 /* AudioBridge.swift */; };
 		99224F4A92EAC2935F0AFECD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4A0F2EAECE7CE7153C43A13C /* Assets.xcassets */; };
 		A122D9632A78D37E4E440DBE /* Ringtone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B63FD8D7D1B1D51D06D23BD /* Ringtone.swift */; };
@@ -39,6 +40,7 @@
 		52CB97D70CF5A0A3680E4366 /* DJOneHubNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DJOneHubNativeApp.swift; sourceTree = "<group>"; };
 		5511AFD27D1673297909199E /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		5E66119EDEC7816A5F417986 /* DashboardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardStore.swift; sourceTree = "<group>"; };
+		68E8A0F8DB72294EB7FB5DE2 /* CallHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHistoryView.swift; sourceTree = "<group>"; };
 		7B63FD8D7D1B1D51D06D23BD /* Ringtone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Ringtone.swift; sourceTree = "<group>"; };
 		8F658F8040ABB05665E2861A /* UnixSocketURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnixSocketURLProtocol.swift; sourceTree = "<group>"; };
 		C06A5E003D640BB7E8549F26 /* AudioBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioBridge.swift; sourceTree = "<group>"; };
@@ -122,6 +124,7 @@
 			isa = PBXGroup;
 			children = (
 				FB2AA62D9556A49059333C15 /* AboutView.swift */,
+				68E8A0F8DB72294EB7FB5DE2 /* CallHistoryView.swift */,
 				DB45AD6AB93DBA1F357E5695 /* ContentView.swift */,
 				FCF20520A20CFDC1ACF07AF4 /* DiagnosticsView.swift */,
 				2726B5DD5C2CB2DB372DDF46 /* ESIMView.swift */,
@@ -245,6 +248,7 @@
 				D95B716A9424825AF2E9CEB8 /* AboutView.swift in Sources */,
 				86A4EF195190FD8DB8452843 /* AudioBridge.swift in Sources */,
 				DCFA455CA254BA22DCE92D89 /* BackendProcess.swift in Sources */,
+				84F1E167D8AD5C0CFFD5A7A0 /* CallHistoryView.swift in Sources */,
 				0A0B94E9FDB31B67359D0BEA /* ContentView.swift in Sources */,
 				37D77738BD76FD01E4729F8B /* DJOneHubNativeApp.swift in Sources */,
 				C65DAD302F467303D58CE553 /* DashboardStore.swift in Sources */,

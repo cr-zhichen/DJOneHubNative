@@ -54,6 +54,10 @@ final class DashboardStore: ObservableObject {
     @Published var incomingAt: Date?
     /// 是否显示来电详情弹窗
     @Published var showCallDetail = false
+    /// 通话记录
+    @Published var callHistory: [CallRecord] = []
+    /// 是否显示通话记录弹窗
+    @Published var showCallHistory = false
 
     private let backend: BackendProcess
     private var timer: Timer?
@@ -72,6 +76,7 @@ final class DashboardStore: ObservableObject {
                     self.loadServices()
                     self.syncSMSAdopt()
                     self.syncVoiceEnabled()
+                    self.loadCallHistory()
                 default:
                     self.stopPolling()
                     self.reset()
@@ -296,6 +301,46 @@ final class DashboardStore: ObservableObject {
             stopAudio()
             incomingAt = nil
             IncomingCallCard.shared.hide()
+            loadCallHistory()
+        }
+    }
+
+    // MARK: - 通话记录
+
+    /// 拉取通话记录（后端按最新在前返回）
+    func loadCallHistory() {
+        guard case .running = backend.state else { return }
+        Task {
+            do {
+                let list: [CallRecord] = try await APIClient().get("api/calls")
+                callHistory = list
+            } catch {
+                // 拉取失败保持旧数据
+            }
+        }
+    }
+
+    /// 清空全部通话记录
+    func clearCallHistory() {
+        Task {
+            do {
+                let _: CallClearResult = try await APIClient().send("api/calls/clear")
+                callHistory = []
+            } catch {
+                toast = ToastItem(message: "清空失败：\(error.localizedDescription)", isSuccess: false, title: "通话记录")
+            }
+        }
+    }
+
+    /// 删除单条通话记录
+    func deleteCallRecord(_ id: String) {
+        Task {
+            do {
+                let _: CallClearResult = try await APIClient().send("api/calls/delete", body: CallDeleteRequest(id: id))
+                callHistory.removeAll { $0.id == id }
+            } catch {
+                toast = ToastItem(message: "删除失败：\(error.localizedDescription)", isSuccess: false, title: "通话记录")
+            }
         }
     }
 

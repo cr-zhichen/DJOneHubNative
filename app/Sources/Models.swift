@@ -344,6 +344,36 @@ struct CallActionResult: Decodable {
     let response: String?
 }
 
+struct CallClearResult: Decodable {
+    let ok: Bool
+}
+
+struct CallDeleteRequest: Encodable {
+    let id: String
+}
+
+// MARK: - 通话记录
+
+/// GET /api/calls：顶层是数组
+struct CallRecord: Decodable, Identifiable {
+    let id: String
+    let direction: String
+    let number: String?
+    let answered: Bool
+    let startedAt: Date
+    let endedAt: Date
+    let duration: Int
+
+    var isIncoming: Bool { direction == "in" }
+    var isMissed: Bool { isIncoming && !answered }
+
+    enum CodingKeys: String, CodingKey {
+        case id, direction, number, answered, duration
+        case startedAt = "started_at"
+        case endedAt = "ended_at"
+    }
+}
+
 struct VoiceEnableRequest: Encodable {
     let enabled: Bool
 }

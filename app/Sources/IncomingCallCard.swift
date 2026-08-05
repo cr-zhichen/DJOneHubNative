@@ -197,8 +197,8 @@ struct IncomingCallCardContent: View {
                 .buttonStyle(.bordered)
             }
         }
-        .padding(16)
-        .frame(width: 360)
+        .padding(14)
+        .frame(width: 300)
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color(nsColor: .windowBackgroundColor))
