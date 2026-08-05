@@ -1,11 +1,11 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/AppIcon-dark.png">
-    <img alt="DJOneHub Native" src="docs/AppIcon-light.png" width="128">
+    <img alt="DJOneHub" src="docs/AppIcon-light.png" width="128">
   </picture>
 </p>
 
-<h1 align="center">DJOneHub Native</h1>
+<h1 align="center">DJOneHub</h1>
 
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-PolyForm%20Noncommercial-orange"></a>
@@ -72,7 +72,7 @@ mise run backend:test / backend:vet / backend:tidy
 ## 运行
 
 ```sh
-open dist/DJOneHubNative.app
+open dist/DJOneHub-arm64.app
 ```
 
 - 首页可选择开启/关闭后端服务，服务随 app 退出而停止

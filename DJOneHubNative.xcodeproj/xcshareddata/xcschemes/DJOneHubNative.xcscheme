@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "9C2BA06E8BC8022EFF054646"
-               BuildableName = "DJOneHubNative.app"
+               BuildableName = "DJOneHub.app"
                BlueprintName = "DJOneHubNative"
                ReferencedContainer = "container:DJOneHubNative.xcodeproj">
             </BuildableReference>
@@ -33,7 +33,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "9C2BA06E8BC8022EFF054646"
-            BuildableName = "DJOneHubNative.app"
+            BuildableName = "DJOneHub.app"
             BlueprintName = "DJOneHubNative"
             ReferencedContainer = "container:DJOneHubNative.xcodeproj">
          </BuildableReference>
@@ -58,7 +58,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "9C2BA06E8BC8022EFF054646"
-            BuildableName = "DJOneHubNative.app"
+            BuildableName = "DJOneHub.app"
             BlueprintName = "DJOneHubNative"
             ReferencedContainer = "container:DJOneHubNative.xcodeproj">
          </BuildableReference>
@@ -77,7 +77,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "9C2BA06E8BC8022EFF054646"
-            BuildableName = "DJOneHubNative.app"
+            BuildableName = "DJOneHub.app"
             BlueprintName = "DJOneHubNative"
             ReferencedContainer = "container:DJOneHubNative.xcodeproj">
          </BuildableReference>

@@ -16,7 +16,8 @@ struct AboutView: View {
                         .frame(width: 56, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("DJOneHub Native").font(.headline)
+                        Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "DJOneHub")
+                            .font(.headline)
                         Text("版本 \(updateChecker.currentVersion)（构建 \(updateChecker.buildNumber)）")
                             .font(.callout).foregroundStyle(.secondary)
                         Text("构建于 \(buildDateText)")

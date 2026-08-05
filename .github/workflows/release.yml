@@ -48,11 +48,11 @@ jobs:
               MARKETING_VERSION="$VERSION" build
           }
           XCODE_BUILD "arm64 x86_64"
-          cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative.app
+          cp -R build/DerivedData/Build/Products/Release/DJOneHub.app dist/DJOneHub.app
           XCODE_BUILD "arm64"
-          cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-arm64.app
+          cp -R build/DerivedData/Build/Products/Release/DJOneHub.app dist/DJOneHub-arm64.app
           XCODE_BUILD "x86_64"
-          cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-x86_64.app
+          cp -R build/DerivedData/Build/Products/Release/DJOneHub.app dist/DJOneHub-x86_64.app
 
       - name: Package DMGs
         run: |
@@ -60,11 +60,11 @@ jobs:
           pipx install dmgbuild
           export PATH="$HOME/.local/bin:$PATH"
           for VARIANT in "" "-arm64" "-x86_64"; do
-            APP="DJOneHubNative${VARIANT}.app"
+            APP="DJOneHub${VARIANT}.app"
             [ -d "dist/$APP" ] || continue
-            DMG="DJOneHubNative-${{ github.ref_name }}${VARIANT}.dmg"
-            sed "s|DJOneHubNative-arm64.app|$APP|" scripts/dmgbuild.json > "/tmp/dmgbuild${VARIANT}.json"
-            dmgbuild -s "/tmp/dmgbuild${VARIANT}.json" "DJOneHub Native" "dist/$DMG"
+            DMG="DJOneHub-${{ github.ref_name }}${VARIANT}.dmg"
+            sed "s|DJOneHub-arm64.app|$APP|" scripts/dmgbuild.json > "/tmp/dmgbuild${VARIANT}.json"
+            dmgbuild -s "/tmp/dmgbuild${VARIANT}.json" "DJOneHub" "dist/$DMG"
             echo "created dist/$DMG"
           done
 
@@ -74,8 +74,8 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           files: |
-            dist/DJOneHubNative-${{ github.ref_name }}.dmg
-            dist/DJOneHubNative-${{ github.ref_name }}-arm64.dmg
-            dist/DJOneHubNative-${{ github.ref_name }}-x86_64.dmg
+            dist/DJOneHub-${{ github.ref_name }}.dmg
+            dist/DJOneHub-${{ github.ref_name }}-arm64.dmg
+            dist/DJOneHub-${{ github.ref_name }}-x86_64.dmg
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true

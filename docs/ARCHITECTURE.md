@@ -3,8 +3,8 @@
 ## 架构总览
 
 ```
-DJOneHubNative.app
-├── Contents/MacOS/DJOneHubNative      # SwiftUI 前端（进程宿主）
+DJOneHub.app
+├── Contents/MacOS/DJOneHub      # SwiftUI 前端（进程宿主）
 └── Contents/Resources/backend/
     ├── djonehubd                      # Go 后端（从 DJOneHub 移植）
     └── libusb-1.0.0.dylib             # 随包 USB 库（@loader_path 链接）

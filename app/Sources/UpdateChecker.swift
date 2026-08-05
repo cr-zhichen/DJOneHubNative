@@ -151,7 +151,7 @@ final class UpdateChecker: ObservableObject {
         url.append(queryItems: [URLQueryItem(name: "per_page", value: "20")])
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("DJOneHubNative/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        request.setValue("DJOneHub/\(currentVersion)", forHTTPHeaderField: "User-Agent")
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)

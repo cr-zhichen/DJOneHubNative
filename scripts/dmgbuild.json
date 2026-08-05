@@ -1,6 +1,6 @@
 {
-  "title": "DJOneHub Native",
-  "volume_name": "DJOneHub Native",
+  "title": "DJOneHub",
+  "volume_name": "DJOneHub",
   "format": "UDZO",
   "files": [],
   "symlinks": {
@@ -22,8 +22,8 @@
       "x": 140,
       "y": 164,
       "type": "file",
-      "path": "dist/DJOneHubNative-arm64.app",
-      "name": "DJOneHubNative.app"
+      "path": "dist/DJOneHub-arm64.app",
+      "name": "DJOneHub.app"
     },
     {
       "x": 408,

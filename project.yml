@@ -21,6 +21,7 @@ settings:
     ENABLE_HARDENED_RUNTIME: NO
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
+    DISPLAY_NAME: "DJOneHub"
 
 targets:
   DJOneHubNative:
@@ -35,7 +36,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.djonehub.native
-        PRODUCT_NAME: DJOneHubNative
+        PRODUCT_NAME: DJOneHub
         INFOPLIST_FILE: app/Resources/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

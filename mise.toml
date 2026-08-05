@@ -5,46 +5,50 @@ go = "1.26.3"
 description = "用 Xcode 构建 .app 并输出到 dist/（本机架构）"
 dir = "."
 run = [
-  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS=$(uname -m) MARKETING_VERSION=0.1.0-alpha build",
+  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS=$(uname -m) MARKETING_VERSION=0.1.0-alpha PRODUCT_BUNDLE_IDENTIFIER=com.djonehub.native.alpha DISPLAY_NAME=\"DJOneHub Alpha\" build",
   "mkdir -p dist",
-  "rm -rf dist/DJOneHubNative-$(uname -m).app",
-  "cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-$(uname -m).app",
+  "rm -rf dist/DJOneHub-$(uname -m).app",
+  "cp -R build/DerivedData/Build/Products/Release/DJOneHub.app dist/DJOneHub-$(uname -m).app",
+  "rm -rf build/DerivedData/Build/Products/Release/DJOneHub.app",
 ]
 
 [tasks."build:arm64"]
 description = "构建 arm64 包到 dist/"
 dir = "."
 run = [
-  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS=arm64 MARKETING_VERSION=0.1.0-alpha build",
+  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS=arm64 MARKETING_VERSION=0.1.0-alpha PRODUCT_BUNDLE_IDENTIFIER=com.djonehub.native.alpha DISPLAY_NAME=\"DJOneHub Alpha\" build",
   "mkdir -p dist",
-  "rm -rf dist/DJOneHubNative-arm64.app",
-  "cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-arm64.app",
+  "rm -rf dist/DJOneHub-arm64.app",
+  "cp -R build/DerivedData/Build/Products/Release/DJOneHub.app dist/DJOneHub-arm64.app",
+  "rm -rf build/DerivedData/Build/Products/Release/DJOneHub.app",
 ]
 
 [tasks."build:x86_64"]
 description = "构建 x86_64 包到 dist/（需设置 LIBUSB_DYLIB_X86_64）"
 dir = "."
 run = [
-  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS=x86_64 MARKETING_VERSION=0.1.0-alpha build",
+  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS=x86_64 MARKETING_VERSION=0.1.0-alpha PRODUCT_BUNDLE_IDENTIFIER=com.djonehub.native.alpha DISPLAY_NAME=\"DJOneHub Alpha\" build",
   "mkdir -p dist",
-  "rm -rf dist/DJOneHubNative-x86_64.app",
-  "cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-x86_64.app",
+  "rm -rf dist/DJOneHub-x86_64.app",
+  "cp -R build/DerivedData/Build/Products/Release/DJOneHub.app dist/DJOneHub-x86_64.app",
+  "rm -rf build/DerivedData/Build/Products/Release/DJOneHub.app",
 ]
 
 [tasks."build:universal"]
 description = "构建通用包到 dist/（需设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64 指向通用 libusb）"
 dir = "."
 run = [
-  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS='arm64 x86_64' MARKETING_VERSION=0.1.0-alpha build",
+  "xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative -configuration Release -destination 'platform=macOS' -derivedDataPath build/DerivedData ARCHS='arm64 x86_64' MARKETING_VERSION=0.1.0-alpha PRODUCT_BUNDLE_IDENTIFIER=com.djonehub.native.alpha DISPLAY_NAME=\"DJOneHub Alpha\" build",
   "mkdir -p dist",
-  "rm -rf dist/DJOneHubNative.app",
-  "cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative.app",
+  "rm -rf dist/DJOneHub.app",
+  "cp -R build/DerivedData/Build/Products/Release/DJOneHub.app dist/DJOneHub.app",
+  "rm -rf build/DerivedData/Build/Products/Release/DJOneHub.app",
 ]
 
 [tasks.launch]
 description = "启动已构建的 app（本机架构优先，其次通用包）"
 dir = "."
-run = "open dist/DJOneHubNative-$(uname -m).app 2>/dev/null || open dist/DJOneHubNative.app"
+run = "open dist/DJOneHub-$(uname -m).app 2>/dev/null || open dist/DJOneHub.app"
 
 [tasks.clean]
 description = "清理 build/ 与 dist/"
