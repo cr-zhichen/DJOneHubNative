@@ -5,6 +5,7 @@ struct HomeView: View {
     @EnvironmentObject private var backend: BackendProcess
     @EnvironmentObject private var store: DashboardStore
     @EnvironmentObject private var smsStore: SMSStore
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var showingRebootConfirm = false
     @State private var copiedValue: String?
@@ -183,7 +184,10 @@ struct HomeView: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: 10).fill(
+            colorScheme == .dark
+                ? Color(nsColor: .controlBackgroundColor)
+                : Color.accentColor.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
     }
 

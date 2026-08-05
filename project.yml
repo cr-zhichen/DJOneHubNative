@@ -19,6 +19,8 @@ settings:
     CODE_SIGN_IDENTITY: "-"
     ENABLE_APP_SANDBOX: NO
     ENABLE_HARDENED_RUNTIME: NO
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
 
 targets:
   DJOneHubNative:
@@ -27,6 +29,7 @@ targets:
     sources:
       - path: app/Sources
       - path: app/Resources/Icons
+      - path: app/Resources/Assets.xcassets
     dependencies:
       - package: Awesome
     settings:

@@ -5,12 +5,13 @@ import Awesome
 /// 关于与更新：系统设置风格的简洁分组表单
 struct AboutView: View {
     @EnvironmentObject private var updateChecker: UpdateChecker
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Form {
             Section {
                 HStack(spacing: 14) {
-                    Image(nsImage: NSApplication.shared.applicationIconImage)
+                    Image("AppIconPreview")
                         .resizable()
                         .frame(width: 56, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -29,7 +30,7 @@ struct AboutView: View {
                     } label: {
                         Awesome.Brand.github.image
                             .size(26)
-                            .foregroundColor(.primary)
+                            .foregroundColor(colorScheme == .dark ? .white : .black)
                             .help("项目主页")
                     }
                     .buttonStyle(.plain)

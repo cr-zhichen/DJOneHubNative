@@ -16,6 +16,7 @@
 		7132C6870A22C6E7C3CD0A9D /* SMSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FE8CEA7FD366A18D63D79BB /* SMSView.swift */; };
 		839CB9910988FF644BF48F48 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = EF323F316D84B16D3F424AA1 /* AppIcon.icon */; };
 		86A4EF195190FD8DB8452843 /* AudioBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C06A5E003D640BB7E8549F26 /* AudioBridge.swift */; };
+		99224F4A92EAC2935F0AFECD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4A0F2EAECE7CE7153C43A13C /* Assets.xcassets */; };
 		C54A1D5773A5E4D223CB08B0 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC11388FA67B835A55D6B961 /* HomeView.swift */; };
 		C65DAD302F467303D58CE553 /* DashboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E66119EDEC7816A5F417986 /* DashboardStore.swift */; };
 		C856F18A2C9A8B48080E46E6 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = C84FC7D3D21A21CC374D0541 /* Models.swift */; };
@@ -30,6 +31,7 @@
 		1FE8CEA7FD366A18D63D79BB /* SMSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMSView.swift; sourceTree = "<group>"; };
 		2726B5DD5C2CB2DB372DDF46 /* ESIMView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ESIMView.swift; sourceTree = "<group>"; };
 		37DBF2924F3E9481FA911BAD /* DJOneHubNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DJOneHubNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4A0F2EAECE7CE7153C43A13C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		52CB97D70CF5A0A3680E4366 /* DJOneHubNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DJOneHubNativeApp.swift; sourceTree = "<group>"; };
 		5511AFD27D1673297909199E /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		5E66119EDEC7816A5F417986 /* DashboardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardStore.swift; sourceTree = "<group>"; };
@@ -124,6 +126,7 @@
 		FFA71028079A9414E7B99A13 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				4A0F2EAECE7CE7153C43A13C /* Assets.xcassets */,
 				988F2BB1DB8D56E0622528C1 /* Icons */,
 			);
 			path = Resources;
@@ -195,6 +198,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				839CB9910988FF644BF48F48 /* AppIcon.icon in Resources */,
+				99224F4A92EAC2935F0AFECD /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -284,6 +288,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
@@ -298,6 +303,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -363,6 +369,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
@@ -383,6 +390,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
