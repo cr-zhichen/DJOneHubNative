@@ -24,6 +24,7 @@
 		C65DAD302F467303D58CE553 /* DashboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E66119EDEC7816A5F417986 /* DashboardStore.swift */; };
 		C856F18A2C9A8B48080E46E6 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = C84FC7D3D21A21CC374D0541 /* Models.swift */; };
 		CCDD69D5E523420BC2C5E3EE /* SMSStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5FE558AD4FEF1919375198D /* SMSStore.swift */; };
+		D17A5BEAA6B91E0CF4345CB7 /* AutoLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0C9E1750A28B9B4C02C072B /* AutoLaunch.swift */; };
 		D95B716A9424825AF2E9CEB8 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2AA62D9556A49059333C15 /* AboutView.swift */; };
 		DCFA455CA254BA22DCE92D89 /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = C425E69F6A5C567C97D76733 /* BackendProcess.swift */; };
 		E0A176B7AED47B544F0DED92 /* Ringtones in Resources */ = {isa = PBXBuildFile; fileRef = 34932915608A3DAB57EDF189 /* Ringtones */; };
@@ -44,6 +45,7 @@
 		7B63FD8D7D1B1D51D06D23BD /* Ringtone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Ringtone.swift; sourceTree = "<group>"; };
 		8F658F8040ABB05665E2861A /* UnixSocketURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnixSocketURLProtocol.swift; sourceTree = "<group>"; };
 		C06A5E003D640BB7E8549F26 /* AudioBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioBridge.swift; sourceTree = "<group>"; };
+		C0C9E1750A28B9B4C02C072B /* AutoLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoLaunch.swift; sourceTree = "<group>"; };
 		C425E69F6A5C567C97D76733 /* BackendProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcess.swift; sourceTree = "<group>"; };
 		C5FE558AD4FEF1919375198D /* SMSStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMSStore.swift; sourceTree = "<group>"; };
 		C84FC7D3D21A21CC374D0541 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -90,6 +92,7 @@
 			children = (
 				5511AFD27D1673297909199E /* APIClient.swift */,
 				C06A5E003D640BB7E8549F26 /* AudioBridge.swift */,
+				C0C9E1750A28B9B4C02C072B /* AutoLaunch.swift */,
 				C425E69F6A5C567C97D76733 /* BackendProcess.swift */,
 				5E66119EDEC7816A5F417986 /* DashboardStore.swift */,
 				52CB97D70CF5A0A3680E4366 /* DJOneHubNativeApp.swift */,
@@ -247,6 +250,7 @@
 				E9BF9071087C70A15FDCE7FF /* APIClient.swift in Sources */,
 				D95B716A9424825AF2E9CEB8 /* AboutView.swift in Sources */,
 				86A4EF195190FD8DB8452843 /* AudioBridge.swift in Sources */,
+				D17A5BEAA6B91E0CF4345CB7 /* AutoLaunch.swift in Sources */,
 				DCFA455CA254BA22DCE92D89 /* BackendProcess.swift in Sources */,
 				84F1E167D8AD5C0CFFD5A7A0 /* CallHistoryView.swift in Sources */,
 				0A0B94E9FDB31B67359D0BEA /* ContentView.swift in Sources */,
