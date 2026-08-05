@@ -74,7 +74,7 @@ open dist/DJOneHubNative.app
 
 ### 首次启动（发行版）
 
-发行版为 ad-hoc 签名（无公证），首次启动时 macOS 可能提示"无法验证开发者"。如遇提示：
+发行版为 ad-hoc 签名（无公证），从 GitHub Releases 下载 **DMG**，双击挂载后将 App 拖入"应用程序"文件夹。首次启动时 macOS 可能提示"无法验证开发者"。如遇提示：
 
 1. 尝试打开一次应用
 2. 打开"系统设置"

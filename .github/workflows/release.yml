@@ -52,12 +52,17 @@ jobs:
           XCODE_BUILD "x86_64"
           cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative-x86_64.app
 
-      - name: Package
+      - name: Package DMGs
         run: |
-          cd dist
-          ditto -c -k --sequesterRsrc --keepParent DJOneHubNative.app DJOneHubNative-${{ github.ref_name }}.zip
-          ditto -c -k --sequesterRsrc --keepParent DJOneHubNative-arm64.app DJOneHubNative-${{ github.ref_name }}-arm64.zip
-          ditto -c -k --sequesterRsrc --keepParent DJOneHubNative-x86_64.app DJOneHubNative-${{ github.ref_name }}-x86_64.zip
+          python3 -m pip install dmgbuild
+          for VARIANT in "" "-arm64" "-x86_64"; do
+            APP="DJOneHubNative${VARIANT}.app"
+            [ -d "dist/$APP" ] || continue
+            DMG="DJOneHubNative${VARIANT}-${{ github.ref_name }}.dmg"
+            sed "s|DJOneHubNative-arm64.app|$APP|" scripts/dmgbuild.json > "/tmp/dmgbuild${VARIANT}.json"
+            dmgbuild -s "/tmp/dmgbuild${VARIANT}.json" "DJOneHub Native" "dist/$DMG"
+            echo "created dist/$DMG"
+          done
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -65,8 +70,8 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           files: |
-            dist/DJOneHubNative-${{ github.ref_name }}.zip
-            dist/DJOneHubNative-${{ github.ref_name }}-arm64.zip
-            dist/DJOneHubNative-${{ github.ref_name }}-x86_64.zip
+            dist/DJOneHubNative-${{ github.ref_name }}.dmg
+            dist/DJOneHubNative-${{ github.ref_name }}-arm64.dmg
+            dist/DJOneHubNative-${{ github.ref_name }}-x86_64.dmg
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true

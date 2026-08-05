@@ -1,0 +1,34 @@
+{
+  "title": "DJOneHub Native",
+  "volume_name": "DJOneHub Native",
+  "format": "UDZO",
+  "files": [],
+  "symlinks": {
+    "Applications": "/Applications"
+  },
+  "window": {
+    "position": {
+      "x": 200,
+      "y": 150
+    },
+    "size": {
+      "width": 660,
+      "height": 440
+    }
+  },
+  "icon-size": 112,
+  "contents": [
+    {
+      "x": 180,
+      "y": 180,
+      "type": "file",
+      "path": "dist/DJOneHubNative-arm64.app"
+    },
+    {
+      "x": 480,
+      "y": 180,
+      "type": "link",
+      "path": "/Applications"
+    }
+  ]
+}
