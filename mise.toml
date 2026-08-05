@@ -2,11 +2,31 @@
 go = "1.26.3"
 
 [tasks.build]
-description = "构建 DJOneHubNative.app（Go 后端 + SwiftUI 前端）"
+description = "构建 .app（本机架构）"
 dir = "."
 run = "sh scripts/build-app.sh"
 
-[tasks.launch]
-description = "启动已构建的 app"
+[tasks."build:arm64"]
+description = "构建 arm64 包"
 dir = "."
-run = "open dist/DJOneHubNative.app"
+run = "sh scripts/build-app.sh arm64"
+
+[tasks."build:x86_64"]
+description = "构建 x86_64 包"
+dir = "."
+run = "sh scripts/build-app.sh x86_64"
+
+[tasks."build:universal"]
+description = "构建通用包（arm64 + x86_64）"
+dir = "."
+run = "sh scripts/build-app.sh universal"
+
+[tasks.launch]
+description = "启动已构建的 app（本机架构优先，其次通用包）"
+dir = "."
+run = "open dist/DJOneHubNative-$(uname -m).app 2>/dev/null || open dist/DJOneHubNative.app"
+
+[tasks.clean]
+description = "清理 build/ 与 dist/"
+dir = "."
+run = "rm -rf build dist"

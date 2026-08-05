@@ -11,7 +11,7 @@ DJOneHub（大疆第一代 4G 模块管理工具）的原生 macOS 重制版：S
 - 大疆第一代 4G 模块
 - 可正常使用的实体 SIM，或与当前实现兼容的实体 eUICC/eSIM 卡片
 - 支持数据传输的 USB-C 线缆
-- Apple Silicon Mac
+- Apple Silicon 或 Intel Mac
 
 模块的 USB 设备标识通常为 `2ca3:4006`。连接后若 macOS 完全识别不到 USB 设备，请优先确认线缆支持数据传输。
 
@@ -27,12 +27,16 @@ DJOneHub（大疆第一代 4G 模块管理工具）的原生 macOS 重制版：S
 ## 构建
 
 ```sh
-mise install      # 按 mise.toml 安装固定版本的 Go（1.26.3）
-mise run build    # 构建 .app
-mise run launch   # 启动已构建的 app
+mise install                # 按 mise.toml 安装固定版本的 Go（1.26.3）
+mise run build              # 构建 .app（本机架构）
+mise run build:universal    # 构建通用包（arm64 + x86_64）
+mise run build:arm64 / build:x86_64
+mise run launch             # 启动已构建的 app
+mise run clean              # 清理 build/ 与 dist/
+mise run backend:test / backend:vet / backend:tidy
 ```
 
-需要：`mise`、`pkg-config`、`libusb`（brew）、Command Line Tools（swiftc）。不依赖完整 Xcode。
+需要：`mise`、`pkg-config`、`libusb`（brew）、Command Line Tools（swiftc）。不依赖完整 Xcode。发行版同时提供 universal / arm64 / x86_64 三种包。
 
 ## 运行
 

@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Build universal libusb
+        run: |
+          curl -sL -o libusb.tar.bz2 https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2
+          tar xjf libusb.tar.bz2
+          cd libusb-1.0.30
+          CFLAGS="-arch arm64 -arch x86_64 -O2" ./configure --disable-udev --disable-examples-build --prefix="$RUNNER_TEMP/libusb" >/dev/null
+          make -j$(sysctl -n hw.ncpu) >/dev/null
+          make install >/dev/null
+          lipo -info "$RUNNER_TEMP/libusb/lib/libusb-1.0.0.dylib"
+
+      - name: Build apps
+        env:
+          PKG_CONFIG_PATH: ${{ runner.temp }}/libusb/lib/pkgconfig
+          LIBUSB_DYLIB: ${{ runner.temp }}/libusb/lib/libusb-1.0.0.dylib
+        run: |
+          sh scripts/build-app.sh arm64
+          sh scripts/build-app.sh x86_64
+          sh scripts/build-app.sh universal
+
+      - name: Package
+        run: |
+          cd dist
+          ditto -c -k --sequesterRsrc --keepParent DJOneHubNative.app DJOneHubNative-${{ github.ref_name }}.zip
+          ditto -c -k --sequesterRsrc --keepParent DJOneHubNative-arm64.app DJOneHubNative-${{ github.ref_name }}-arm64.zip
+          ditto -c -k --sequesterRsrc --keepParent DJOneHubNative-x86_64.app DJOneHubNative-${{ github.ref_name }}-x86_64.zip
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: |
+            dist/DJOneHubNative-${{ github.ref_name }}.zip
+            dist/DJOneHubNative-${{ github.ref_name }}-arm64.zip
+            dist/DJOneHubNative-${{ github.ref_name }}-x86_64.zip
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
