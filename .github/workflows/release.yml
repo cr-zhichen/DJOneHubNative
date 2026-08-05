@@ -54,7 +54,8 @@ jobs:
 
       - name: Package DMGs
         run: |
-          python3 -m pip install dmgbuild
+          pipx install dmgbuild
+          export PATH="$HOME/.local/bin:$PATH"
           for VARIANT in "" "-arm64" "-x86_64"; do
             APP="DJOneHubNative${VARIANT}.app"
             [ -d "dist/$APP" ] || continue
