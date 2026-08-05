@@ -11,6 +11,8 @@ struct HomeView: View {
     @State private var copiedValue: String?
     @State private var draggedService: Int?
     @State private var showNotifyDeniedAlert = false
+    @State private var autoLaunchEnabled = false
+    @State private var silentLaunchEnabled = false
     @StateObject private var ringtonePreview = RingtonePreview()
 
     private var status: DeviceStatus? { store.status }
@@ -27,6 +29,7 @@ struct HomeView: View {
                         deviceCard
                         WaterfallLayout(minColumnWidth: 320, spacing: 12) {
                             trafficCard
+                            launchOptionsCard
                             smsCard
                             priorityCard
                             voiceCard
@@ -105,7 +108,11 @@ struct HomeView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: store.callStatus)
         .animation(.easeInOut(duration: 0.25), value: store.toast)
-        .onAppear { store.loadServices() }
+        .onAppear {
+            store.loadServices()
+            autoLaunchEnabled = AutoLaunch.isEnabled
+            silentLaunchEnabled = UserDefaults.standard.bool(forKey: "silentLaunch")
+        }
         .confirmationDialog("重启模块？", isPresented: $showingRebootConfirm, titleVisibility: .visible) {
             Button("重启（AT+CFUN=1,1）", role: .destructive) { store.reboot() }
             Button("取消", role: .cancel) {}
@@ -396,6 +403,23 @@ struct HomeView: View {
         }
     }
 
+    private func setAutoLaunch(_ enabled: Bool) {
+        do {
+            try AutoLaunch.setEnabled(enabled)
+            autoLaunchEnabled = enabled
+            store.toast = ToastItem(message: enabled ? "已开启开机自启，下次登录自动在后台运行" : "已关闭开机自启", isSuccess: true)
+        } catch {
+            autoLaunchEnabled = AutoLaunch.isEnabled
+            store.toast = ToastItem(message: "设置失败：\(error.localizedDescription)", isSuccess: false, title: "开机自启")
+        }
+    }
+
+    private func setSilentLaunch(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: "silentLaunch")
+        silentLaunchEnabled = enabled
+        store.toast = ToastItem(message: enabled ? "已开启静默启动，下次启动不显示主窗口" : "已关闭静默启动", isSuccess: true)
+    }
+
     // MARK: - 语音通话
 
     private var voiceCard: some View {
@@ -485,6 +509,30 @@ struct HomeView: View {
         .sheet(isPresented: $store.showCallHistory) {
             CallHistoryView()
         }
+    }
+
+    // MARK: - 启动选项
+
+    private var launchOptionsCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("启动选项").font(.callout.bold())
+
+            switchRow("开机自启", isOn: Binding(
+                get: { autoLaunchEnabled },
+                set: { setAutoLaunch($0) }
+            ))
+            .help("登录系统后自动在后台运行")
+
+            switchRow("静默启动", isOn: Binding(
+                get: { silentLaunchEnabled },
+                set: { setSilentLaunch($0) }
+            ))
+            .help("启动应用时不显示主窗口，仅后台运行（可通过菜单栏图标打开）")
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
     }
 
     /// 标签左对齐、值可复制的信息行
