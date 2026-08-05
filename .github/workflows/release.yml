@@ -54,12 +54,13 @@ jobs:
 
       - name: Package DMGs
         run: |
+          set -eu
           pipx install dmgbuild
           export PATH="$HOME/.local/bin:$PATH"
           for VARIANT in "" "-arm64" "-x86_64"; do
             APP="DJOneHubNative${VARIANT}.app"
             [ -d "dist/$APP" ] || continue
-            DMG="DJOneHubNative${VARIANT}-${{ github.ref_name }}.dmg"
+            DMG="DJOneHubNative-${{ github.ref_name }}${VARIANT}.dmg"
             sed "s|DJOneHubNative-arm64.app|$APP|" scripts/dmgbuild.json > "/tmp/dmgbuild${VARIANT}.json"
             dmgbuild -s "/tmp/dmgbuild${VARIANT}.json" "DJOneHub Native" "dist/$DMG"
             echo "created dist/$DMG"
