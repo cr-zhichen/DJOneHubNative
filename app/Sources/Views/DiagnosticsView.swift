@@ -258,6 +258,7 @@ struct DiagnosticATView: View {
 
 struct DiagnosticNotifyView: View {
     @EnvironmentObject private var smsStore: SMSStore
+    @EnvironmentObject private var store: DashboardStore
 
     @State private var notifyAuth: String?
     @State private var notifyFeedback: String?
@@ -292,13 +293,23 @@ struct DiagnosticNotifyView: View {
                     .foregroundStyle(notifyFeedback.contains("成功") || notifyFeedback.contains("已发送") ? Color.secondary : Color.red)
             }
 
-            Button {
-                simulateNotify()
-            } label: {
-                Label("模拟通知", systemImage: "bell.badge")
+            HStack(spacing: 8) {
+                Button {
+                    simulateNotify()
+                } label: {
+                    Label("模拟短信通知", systemImage: "bell.badge")
+                }
+                .buttonStyle(.bordered)
+                .help("直接发送一条测试通知，验证新短信系统通知是否正常工作")
+
+                Button {
+                    simulateCallNotify()
+                } label: {
+                    Label("模拟来电通知", systemImage: "phone.fill")
+                }
+                .buttonStyle(.bordered)
+                .help("直接弹出一张自定义来电卡片，验证来电提醒是否正常工作")
             }
-            .buttonStyle(.bordered)
-            .help("直接发送一条测试通知，验证新短信系统通知是否正常工作")
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -335,6 +346,11 @@ struct DiagnosticNotifyView: View {
             notifyFeedback = await smsStore.simulateNotification()
             loadNotifyAuth()
         }
+    }
+
+    private func simulateCallNotify() {
+        notifyFeedback = "已弹出模拟来电卡片（30 秒后自动收起）"
+        IncomingCallCard.shared.show(store: store, preview: true)
     }
 }
 

@@ -105,6 +105,12 @@ type app struct {
 	// 语音功能（USB 音频）开关
 	voiceEnabled bool
 
+	// 来电事件缓存（URC 驱动），供通话状态查询在 CLCC 失败/无条目时兜底
+	callMu          sync.Mutex
+	callURCIncoming bool
+	callURCNumber   string
+	callURCAt       time.Time
+
 	profileNotesMu     sync.Mutex
 	profileNotes       map[string]profileNote
 	profileNotesLoaded bool
@@ -252,6 +258,10 @@ func main() {
 
 	instance := &app{modem: manager, port: port, smsPollInterval: 8 * time.Second}
 	manager.SetSMSCallback(instance.recordSMS)
+	manager.SetRingCallback(instance.onURCRing)
+	manager.SetClipCallback(instance.onURCClip)
+	manager.SetHangupCallback(instance.onURCHangup)
+	manager.SetConnectCallback(instance.onURCConnect)
 	if err := manager.Start(); err != nil {
 		log.Fatalf("open modem on %s: %v", port, err)
 	}
@@ -1792,6 +1802,48 @@ func (a *app) check4GRoute(w http.ResponseWriter, _ *http.Request) {
 
 // MARK: - 语音与通话
 
+// onURCRing 来电 RING URC：缓存来电事件
+func (a *app) onURCRing() {
+	a.callMu.Lock()
+	defer a.callMu.Unlock()
+	a.callURCIncoming = true
+	a.callURCAt = time.Now()
+}
+
+// onURCClip +CLIP URC：记录来电号码
+func (a *app) onURCClip(number string) {
+	a.callMu.Lock()
+	defer a.callMu.Unlock()
+	if number != "" {
+		a.callURCNumber = number
+	}
+}
+
+// onURCHangup NO CARRIER URC：通话结束，清空来电缓存
+func (a *app) onURCHangup() {
+	a.callMu.Lock()
+	defer a.callMu.Unlock()
+	a.callURCIncoming = false
+	a.callURCNumber = ""
+}
+
+// onURCConnect CONNECT URC：外呼被接听
+func (a *app) onURCConnect() {
+	a.callMu.Lock()
+	defer a.callMu.Unlock()
+	a.callURCIncoming = false
+}
+
+// cachedURCCallState 返回 URC 缓存中的来电状态（仅 10 秒内有效）
+func (a *app) cachedURCCallState() (callStateInfo, bool) {
+	a.callMu.Lock()
+	defer a.callMu.Unlock()
+	if a.callURCIncoming && time.Since(a.callURCAt) < 10*time.Second {
+		return callStateInfo{State: "incoming", Number: a.callURCNumber, Incoming: true}, true
+	}
+	return callStateInfo{}, false
+}
+
 type clccCall struct {
 	ID     int
 	Dir    int
@@ -1831,10 +1883,18 @@ type callStateInfo struct {
 func (a *app) currentCallState() callStateInfo {
 	resp, err := a.runATCommand("AT+CLCC", 3*time.Second)
 	if err != nil {
+		// CLCC 失败（模块忙等）时用 URC 缓存兜底
+		if info, ok := a.cachedURCCallState(); ok {
+			return info
+		}
 		return callStateInfo{State: "unknown"}
 	}
 	calls := parseCLCC(resp)
 	if len(calls) == 0 {
+		// CLCC 无通话条目但 URC 刚报告来电时兜底
+		if info, ok := a.cachedURCCallState(); ok {
+			return info
+		}
 		return callStateInfo{State: "idle"}
 	}
 	info := callStateInfo{}

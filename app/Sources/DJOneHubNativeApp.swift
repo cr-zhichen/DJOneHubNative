@@ -29,7 +29,7 @@ struct DJOneHubNativeApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         URLProtocol.registerClass(UnixSocketURLProtocol.self)
-        // 通知权限按需请求（收到短信/用户开启时），启动时不自动注册
+        // 通知权限按需请求（收到短信时弹出系统授权框），启动时不自动注册
         UNUserNotificationCenter.current().delegate = self
         // 打开应用即自动启动后端，退出应用时自动停止
         BackendProcess.shared.start()
@@ -49,9 +49,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        // 点击短信通知：激活窗口并打开短信页
+        let userInfo = response.notification.request.content.userInfo
+        // 点击短信通知：激活窗口并打开短信页（来电提示已改为应用内自定义卡片，不走系统通知）
         NSApp.activate(ignoringOtherApps: true)
-        let sender = response.notification.request.content.userInfo["sender"] as? String
+        let sender = userInfo["sender"] as? String
         Task { @MainActor in
             SMSStore.shared.requestOpenSMS(sender: sender)
         }

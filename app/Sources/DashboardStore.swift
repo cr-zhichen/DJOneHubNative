@@ -14,6 +14,8 @@ struct ToastItem: Identifiable, Equatable {
 /// 避免每次进入首页都重新拉取导致"读取模块状态…"闪烁。
 @MainActor
 final class DashboardStore: ObservableObject {
+    /// 供 AppDelegate（通知点击）等非视图位置访问
+    static weak var shared: DashboardStore?
     @Published var health: HealthStatus?
     @Published var status: DeviceStatus?
     @Published var traffic: TrafficSnapshot?
@@ -284,21 +286,17 @@ final class DashboardStore: ObservableObject {
     private func updateCallStatus(_ status: CallStatus) {
         let previous = callStatus
         callStatus = status
-        // 新来电（从非来电变为来电）
+        // 新来电（从非来电变为来电）：弹出自定义通知卡片并响铃
         if status.isIncoming && !previous.isIncoming {
             incomingAt = Date()
-            showIncomingBanner(status)
+            IncomingCallCard.shared.show(store: self)
         }
         // 通话结束（非空闲 → 空闲）时清空来电信息
         if status.isIdle && (previous.isActive || previous.state == "unknown" || previous.isIncoming) {
             stopAudio()
             incomingAt = nil
+            IncomingCallCard.shared.hide()
         }
-    }
-
-    private func showIncomingBanner(_ status: CallStatus) {
-        toast = ToastItem(message: "\(status.number ?? "未知号码")", isSuccess: false, title: "来电", icon: "phone.fill")
-        scheduleToastDismiss()
     }
 
     func dial(_ number: String) {
