@@ -19,14 +19,15 @@
   "icon-size": 112,
   "contents": [
     {
-      "x": 180,
-      "y": 180,
+      "x": 140,
+      "y": 164,
       "type": "file",
-      "path": "dist/DJOneHubNative-arm64.app"
+      "path": "dist/DJOneHubNative-arm64.app",
+      "name": "DJOneHubNative.app"
     },
     {
-      "x": 480,
-      "y": 180,
+      "x": 408,
+      "y": 164,
       "type": "link",
       "path": "/Applications"
     }

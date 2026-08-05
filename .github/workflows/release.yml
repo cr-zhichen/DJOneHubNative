@@ -40,10 +40,12 @@ jobs:
         run: |
           set -eu
           mkdir -p dist
+          VERSION="${GITHUB_REF_NAME#v}"
           XCODE_BUILD() {
             xcodebuild -project DJOneHubNative.xcodeproj -scheme DJOneHubNative \
               -configuration Release -destination 'platform=macOS' \
-              -derivedDataPath build/DerivedData ARCHS="$1" CODE_SIGN_IDENTITY="-" build
+              -derivedDataPath build/DerivedData ARCHS="$1" CODE_SIGN_IDENTITY="-" \
+              MARKETING_VERSION="$VERSION" build
           }
           XCODE_BUILD "arm64 x86_64"
           cp -R build/DerivedData/Build/Products/Release/DJOneHubNative.app dist/DJOneHubNative.app
