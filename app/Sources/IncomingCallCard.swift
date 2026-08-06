@@ -91,10 +91,14 @@ final class IncomingCallCard {
 
     /// 点击卡片/查看详情：拉起主窗口并弹出通话详情（预览模式也走同一路径）
     func openDetail() {
-        NSApp.activate(ignoringOtherApps: true)
-        // 主窗口最小化时先还原
-        if let window = NSApp.windows.first(where: { $0.isMiniaturized }) {
-            window.deminiaturize(nil)
+        if AppRuntimeConfiguration.usesModernSceneLifecycle {
+            MainWindowRequestCenter.shared.requestOpen()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+            // 主窗口最小化时先还原
+            if let window = NSApp.windows.first(where: { $0.isMiniaturized }) {
+                window.deminiaturize(nil)
+            }
         }
         if let store {
             store.showCallDetail = true

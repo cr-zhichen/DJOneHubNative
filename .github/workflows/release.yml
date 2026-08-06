@@ -12,6 +12,8 @@ permissions:
 jobs:
   build:
     runs-on: macos-26
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,8 +29,10 @@ jobs:
           curl -sL -o libusb.tar.bz2 https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2
           tar xjf libusb.tar.bz2
           cd libusb-1.0.30
-          CFLAGS="-arch arm64 -arch x86_64 -O2" ./configure --disable-udev --disable-examples-build --prefix="$RUNNER_TEMP/libusb" >/dev/null
-          make -j$(sysctl -n hw.ncpu) >/dev/null
+          CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=13.0 -O2" \
+          LDFLAGS="-mmacosx-version-min=13.0" \
+            ./configure --disable-udev --disable-examples-build --prefix="$RUNNER_TEMP/libusb" >/dev/null
+          make -j"$(sysctl -n hw.ncpu)" >/dev/null
           make install >/dev/null
           lipo -info "$RUNNER_TEMP/libusb/lib/libusb-1.0.0.dylib"
 
@@ -37,6 +41,8 @@ jobs:
           PKG_CONFIG_PATH: ${{ runner.temp }}/libusb/lib/pkgconfig
           LIBUSB_DYLIB_ARM64: ${{ runner.temp }}/libusb/lib/libusb-1.0.0.dylib
           LIBUSB_DYLIB_X86_64: ${{ runner.temp }}/libusb/lib/libusb-1.0.0.dylib
+          CGO_CFLAGS: -mmacosx-version-min=13.0
+          CGO_LDFLAGS: -mmacosx-version-min=13.0
         run: |
           set -eu
           mkdir -p dist
@@ -53,6 +59,45 @@ jobs:
           cp -R build/DerivedData/Build/Products/Release/DJOneHub.app dist/DJOneHub-arm64.app
           XCODE_BUILD "x86_64"
           cp -R build/DerivedData/Build/Products/Release/DJOneHub.app dist/DJOneHub-x86_64.app
+
+      - name: Verify macOS deployment target
+        run: |
+          set -euo pipefail
+          EXPECTED_MINOS="13.0"
+
+          check_minos() {
+            local binary="$1"
+            local values
+
+            if [ ! -f "$binary" ]; then
+              echo "::error file=$binary::Missing Mach-O binary"
+              return 1
+            fi
+
+            values="$(vtool -show-build "$binary" | awk '$1 == "minos" { print $2 }')"
+            if [ -z "$values" ]; then
+              echo "::error file=$binary::Unable to read LC_BUILD_VERSION minos"
+              return 1
+            fi
+
+            while IFS= read -r value; do
+              if [ "$value" != "$EXPECTED_MINOS" ]; then
+                echo "::error file=$binary::Expected minos $EXPECTED_MINOS, got $value"
+                return 1
+              fi
+            done <<< "$values"
+
+            echo "verified minos $EXPECTED_MINOS: $binary"
+          }
+
+          for app in \
+            dist/DJOneHub.app \
+            dist/DJOneHub-arm64.app \
+            dist/DJOneHub-x86_64.app; do
+            check_minos "$app/Contents/MacOS/DJOneHub"
+            check_minos "$app/Contents/Resources/backend/djonehubd"
+            check_minos "$app/Contents/Resources/backend/libusb-1.0.0.dylib"
+          done
 
       - name: Package DMGs
         run: |

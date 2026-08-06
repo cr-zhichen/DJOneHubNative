@@ -13,6 +13,9 @@ struct HomeView: View {
     @State private var showNotifyDeniedAlert = false
     @State private var autoLaunchEnabled = false
     @State private var silentLaunchEnabled = false
+    @AppStorage(MenuBarDisplayOptions.showSignalKey) private var menuBarShowSignal = false
+    @AppStorage(MenuBarDisplayOptions.showDownloadKey) private var menuBarShowDownload = false
+    @AppStorage(MenuBarDisplayOptions.showUploadKey) private var menuBarShowUpload = false
     @StateObject private var ringtonePreview = RingtonePreview()
 
     private var status: DeviceStatus? { store.status }
@@ -374,6 +377,7 @@ struct HomeView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .labelsHidden()
+                .accessibilityLabel(title)
                 .onChange(of: isOn.wrappedValue) { on in
                     if on { onChange?() }
                 }
@@ -515,7 +519,7 @@ struct HomeView: View {
 
     private var launchOptionsCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("启动选项").font(.callout.bold())
+            Text("应用设置").font(.callout.bold())
 
             switchRow("开机自启", isOn: Binding(
                 get: { autoLaunchEnabled },
@@ -528,11 +532,42 @@ struct HomeView: View {
                 set: { setSilentLaunch($0) }
             ))
             .help("启动应用时不显示主窗口，仅后台运行（可通过菜单栏图标打开）")
+
+            Divider().padding(.vertical, 2)
+
+            Text("菜单栏显示").font(.callout.bold())
+
+            switchRow("信号强度", isOn: $menuBarShowSignal)
+                .help("使用四级信号图标显示当前蜂窝信号强度")
+
+            switchRow("下载速率", isOn: $menuBarShowDownload)
+                .help("在菜单栏显示实时下载速率")
+
+            switchRow("上传速率", isOn: $menuBarShowUpload)
+                .help("在菜单栏显示实时上传速率")
+
+            Text("全部关闭时，仅显示原来的应用图标（默认）。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+        .onChange(of: menuBarShowSignal) { _ in
+            notifyMenuBarDisplayOptionsChanged()
+        }
+        .onChange(of: menuBarShowDownload) { _ in
+            notifyMenuBarDisplayOptionsChanged()
+        }
+        .onChange(of: menuBarShowUpload) { _ in
+            notifyMenuBarDisplayOptionsChanged()
+        }
+    }
+
+    private func notifyMenuBarDisplayOptionsChanged() {
+        NotificationCenter.default.post(
+            name: MenuBarDisplayOptions.didChangeNotification, object: nil)
     }
 
     /// 标签左对齐、值可复制的信息行
