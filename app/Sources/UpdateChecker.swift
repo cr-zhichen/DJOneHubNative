@@ -29,6 +29,139 @@ struct GitHubAsset: Decodable {
     }
 }
 
+/// Semantic Versioning 2.0.0 precedence (build metadata does not affect ordering).
+struct SemanticVersion: Comparable {
+    private enum PrereleaseIdentifier: Equatable {
+        case number(Int)
+        case text(String)
+    }
+
+    private let major: Int
+    private let minor: Int
+    private let patch: Int
+    private let prerelease: [PrereleaseIdentifier]?
+
+    init?(_ rawValue: String) {
+        let normalized = Self.normalizedString(rawValue)
+        let buildParts = normalized.split(separator: "+", maxSplits: 1, omittingEmptySubsequences: false)
+        guard let precedence = buildParts.first, !precedence.isEmpty else { return nil }
+        if buildParts.count == 2 {
+            guard Self.validDotSeparatedIdentifiers(buildParts[1]) else { return nil }
+        }
+
+        let precedenceParts = precedence.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        let core = precedenceParts[0].split(separator: ".", omittingEmptySubsequences: false)
+        guard core.count == 3,
+              let major = Self.parseNumericIdentifier(core[0]),
+              let minor = Self.parseNumericIdentifier(core[1]),
+              let patch = Self.parseNumericIdentifier(core[2]) else {
+            return nil
+        }
+
+        self.major = major
+        self.minor = minor
+        self.patch = patch
+
+        if precedenceParts.count == 2 {
+            let rawIdentifiers = precedenceParts[1].split(separator: ".", omittingEmptySubsequences: false)
+            guard !rawIdentifiers.isEmpty else { return nil }
+
+            var identifiers: [PrereleaseIdentifier] = []
+            identifiers.reserveCapacity(rawIdentifiers.count)
+            for identifier in rawIdentifiers {
+                guard !identifier.isEmpty, Self.validIdentifier(identifier) else { return nil }
+                if Self.isASCIIInteger(identifier) {
+                    guard let value = Self.parseNumericIdentifier(identifier) else { return nil }
+                    identifiers.append(.number(value))
+                } else {
+                    identifiers.append(.text(String(identifier)))
+                }
+            }
+            prerelease = identifiers
+        } else {
+            prerelease = nil
+        }
+    }
+
+    static func normalizedString(_ rawValue: String) -> String {
+        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.first == "v" || value.first == "V" {
+            value.removeFirst()
+        }
+        return value
+    }
+
+    var isStable: Bool {
+        prerelease == nil
+    }
+
+    var isBetaOrReleaseCandidate: Bool {
+        guard let firstIdentifier = prerelease?.first else { return false }
+        switch firstIdentifier {
+        case let .text(value):
+            return value.lowercased() == "beta" || value.lowercased() == "rc"
+        case .number:
+            return false
+        }
+    }
+
+    static func < (lhs: SemanticVersion, rhs: SemanticVersion) -> Bool {
+        if lhs.major != rhs.major { return lhs.major < rhs.major }
+        if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
+        if lhs.patch != rhs.patch { return lhs.patch < rhs.patch }
+
+        switch (lhs.prerelease, rhs.prerelease) {
+        case (nil, nil):
+            return false
+        case (nil, _):
+            return false
+        case (_, nil):
+            return true
+        case let (lhsIdentifiers?, rhsIdentifiers?):
+            for index in 0..<min(lhsIdentifiers.count, rhsIdentifiers.count) {
+                let left = lhsIdentifiers[index]
+                let right = rhsIdentifiers[index]
+                if left == right { continue }
+
+                switch (left, right) {
+                case let (.number(leftValue), .number(rightValue)):
+                    return leftValue < rightValue
+                case (.number, .text):
+                    return true
+                case (.text, .number):
+                    return false
+                case let (.text(leftValue), .text(rightValue)):
+                    return leftValue < rightValue
+                }
+            }
+            return lhsIdentifiers.count < rhsIdentifiers.count
+        }
+    }
+
+    private static func parseNumericIdentifier(_ value: Substring) -> Int? {
+        guard isASCIIInteger(value), !(value.count > 1 && value.first == "0") else { return nil }
+        return Int(value)
+    }
+
+    private static func isASCIIInteger(_ value: Substring) -> Bool {
+        !value.isEmpty && value.unicodeScalars.allSatisfy { (48...57).contains($0.value) }
+    }
+
+    private static func validIdentifier(_ value: Substring) -> Bool {
+        !value.isEmpty && value.unicodeScalars.allSatisfy {
+            (48...57).contains($0.value)
+                || (65...90).contains($0.value)
+                || (97...122).contains($0.value)
+                || $0.value == 45
+        }
+    }
+
+    private static func validDotSeparatedIdentifiers(_ value: Substring) -> Bool {
+        let identifiers = value.split(separator: ".", omittingEmptySubsequences: false)
+        return !identifiers.isEmpty && identifiers.allSatisfy(validIdentifier)
+    }
+}
+
 /// 更新检查：查询 GitHub Releases，区分正式版与测试版（prerelease）。
 @MainActor
 final class UpdateChecker: ObservableObject {
@@ -45,7 +178,7 @@ final class UpdateChecker: ObservableObject {
         var detail: String {
             switch self {
             case .stable: return "仅检查正式发布版本"
-            case .beta: return "包含测试版与预览版"
+            case .beta: return "检查正式版、Beta 与 RC"
             }
         }
     }
@@ -106,21 +239,24 @@ final class UpdateChecker: ObservableObject {
     var updateAvailable: Bool {
         guard hasNewerVersion else { return false }
         guard let latest = latestRelease else { return false }
-        let latestVersion = latest.tagName.replacingOccurrences(of: "v", with: "")
+        let latestVersion = SemanticVersion.normalizedString(latest.tagName)
         return !skippedVersions.contains(latestVersion)
     }
 
     /// GitHub 上是否存在比当前更新的版本（与跳过状态无关）
     var hasNewerVersion: Bool {
-        guard let latest = latestRelease else { return false }
-        let latestVersion = latest.tagName.replacingOccurrences(of: "v", with: "")
-        return compareVersions(latestVersion, currentVersion) > 0
+        guard let latest = latestRelease,
+              let latestVersion = SemanticVersion(latest.tagName),
+              let installedVersion = SemanticVersion(currentVersion) else {
+            return false
+        }
+        return latestVersion > installedVersion
     }
 
     /// 最新版本号（去掉 v 前缀）
     var latestVersionString: String {
         guard let latest = latestRelease else { return "-" }
-        return latest.tagName.replacingOccurrences(of: "v", with: "")
+        return SemanticVersion.normalizedString(latest.tagName)
     }
 
     /// 适合当前机器的 DMG 下载地址；找不到时回退到版本页面
@@ -148,7 +284,7 @@ final class UpdateChecker: ObservableObject {
         lastError = nil
         defer { checking = false }
         var url = URL(string: "https://api.github.com/repos/\(repo)/releases")!
-        url.append(queryItems: [URLQueryItem(name: "per_page", value: "20")])
+        url.append(queryItems: [URLQueryItem(name: "per_page", value: "100")])
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("DJOneHub/\(currentVersion)", forHTTPHeaderField: "User-Agent")
@@ -170,9 +306,7 @@ final class UpdateChecker: ObservableObject {
             }
             let releases = try decoder.decode([GitHubRelease].self, from: data)
 
-            let matched = releases.first { release in
-                channel == .beta ? true : !release.prerelease
-            }
+            let matched = Self.selectLatestRelease(from: releases, for: channel)
             latestRelease = matched
             lastCheckDate = Date()
             UserDefaults.standard.set(lastCheckDate, forKey: Self.lastCheckKey)
@@ -193,14 +327,14 @@ final class UpdateChecker: ObservableObject {
 
     /// 跳过本次更新：该版本不再提醒
     func skipUpdate(_ release: GitHubRelease) {
-        skippedVersions.insert(release.tagName.replacingOccurrences(of: "v", with: ""))
+        skippedVersions.insert(SemanticVersion.normalizedString(release.tagName))
         pendingUpdate = nil
     }
 
     /// 清除最新版本的跳过标记并弹出更新弹窗（点击"最新版本"行时调用）
     func unskipAndPrompt() {
         guard let latest = latestRelease else { return }
-        skippedVersions.remove(latest.tagName.replacingOccurrences(of: "v", with: ""))
+        skippedVersions.remove(SemanticVersion.normalizedString(latest.tagName))
         pendingUpdate = latest
     }
 
@@ -215,15 +349,28 @@ final class UpdateChecker: ObservableObject {
         return machine == "arm64"
     }
 
-    /// 简单版本号比较（忽略预发布后缀）：返回 1 / 0 / -1
-    private func compareVersions(_ a: String, _ b: String) -> Int {
-        let pa = a.split(separator: ".").compactMap { Int($0) }
-        let pb = b.split(separator: ".").compactMap { Int($0) }
-        for i in 0..<max(pa.count, pb.count) {
-            let x = i < pa.count ? pa[i] : 0
-            let y = i < pb.count ? pb[i] : 0
-            if x != y { return x > y ? 1 : -1 }
-        }
-        return 0
+    /// 正式版渠道只接受稳定版；测试版渠道接受稳定版、Beta 与 RC，并按 SemVer 取最高版本。
+    nonisolated static func selectLatestRelease(
+        from releases: [GitHubRelease],
+        for channel: Channel
+    ) -> GitHubRelease? {
+        releases
+            .compactMap { release -> (release: GitHubRelease, version: SemanticVersion)? in
+                guard let version = SemanticVersion(release.tagName) else { return nil }
+                return (release, version)
+            }
+            .filter { candidate in
+                switch channel {
+                case .stable:
+                    return !candidate.release.prerelease && candidate.version.isStable
+                case .beta:
+                    if candidate.release.prerelease {
+                        return candidate.version.isBetaOrReleaseCandidate
+                    }
+                    return candidate.version.isStable
+                }
+            }
+            .max { $0.version < $1.version }?
+            .release
     }
 }
