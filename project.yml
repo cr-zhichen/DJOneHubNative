@@ -127,3 +127,7 @@ targets:
           if [ -n "$old" ]; then
             install_name_tool -change "$old" "@loader_path/libusb-1.0.0.dylib" "${BACKEND_DIR}/djonehubd" || true
           fi
+
+          # 独立进程网络核心：固定源码提交构建，保持与主后端许可证边界分离。
+          "${PROJECT_DIR}/scripts/build-network-core.sh" \
+            "${BACKEND_DIR}" "${TARGET_TEMP_DIR}/network-core" ${ARCHS}

@@ -27,6 +27,7 @@ DJOneHub（大疆第一代 4G 模块管理工具）的原生 macOS 重制版：S
 - 短信收发：会话列表 / 新短信系统通知 / 验证码标记 / 模块旧短信清理
 - eSIM Profile 管理：卡片信息 / Profile 列表 / 下载 / 启用 / 改名 / 删除 / 号码资料
 - 网络与流量：实时流量 / 网卡模式切换 / 4G 出口与代理检查 / 模块重启
+- 应用分流：独立分流（应用级 4G 直连 / 系统直连 / 系统侧 SOCKS）与 Clash 代管（本地 4G SOCKS5 出口）
 - 调试与诊断：网络诊断详情 / AT 指令调试 / 通知调试（分页组织）
 
 ## 界面预览
@@ -67,7 +68,7 @@ mise run clean              # 清理 build/ 与 dist/
 mise run backend:test / backend:vet / backend:tidy
 ```
 
-需要：`mise`、Xcode（26 或更新）、`pkg-config`、`libusb`（brew）。发行版同时提供 universal / arm64 / x86_64 三种 DMG。
+需要：`mise`、Xcode（26 或更新）、`pkg-config`、`libusb`（brew）、`git` 与首次构建时可访问 GitHub 的网络。构建脚本会从固定提交编译独立的 sing-box 网络核心；发行版同时提供 universal / arm64 / x86_64 三种 DMG。
 
 ## 开发与测试环境
 
@@ -113,7 +114,7 @@ open dist/DJOneHub-arm64.app
 - [x] 网络与流量页（实时流量 / 模式切换 / 4G 出口与代理检查 / 诊断 / 重启模块）
 - [x] AT 调试页（快捷命令 / 命令输入 / 响应历史）
 - [x] 语音通话：来电自定义通知卡片（响铃 / 挂断 / 铃声选择 / 通话记录）
-- [ ] 分应用网络代理（按应用选择走模块网络）
+- [x] 分应用网络出口（独立分流 / Clash 代管，默认关闭）
 - [x] 软件开机自启与后台运行
 - [x] 菜单栏显示（默认仅图标，可选信号强度与实时上下行速率）
 

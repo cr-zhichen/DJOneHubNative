@@ -14,6 +14,14 @@ The macOS release package includes **libusb 1.0.30**, distributed under the GNU 
 - Source: <https://github.com/libusb/libusb/releases/tag/v1.0.30>
 - License text in the release package: `licenses/libusb-COPYING`
 
+The macOS application bundle also includes an **unmodified, separately executed sing-box 1.13.16 network core**, distributed under the GNU General Public License, version 3 or later. DJOneHub communicates with it only through generated configuration and process control; it is not linked into the DJOneHub executable or Go backend.
+
+- Project: <https://github.com/SagerNet/sing-box>
+- Exact source revision: `17ec3c71af8ca946dc50bf0d927c39fc77322aec`
+- Build recipe: `scripts/build-network-core.sh`
+- License text in the application bundle: `Contents/Resources/backend/sing-box-GPL-3.0-or-later.txt`
+- Corresponding source archive: attached to each DJOneHub GitHub Release as `sing-box-1.13.16-source.tar.gz`
+
 ## Vendored Source Dependencies
 
 The source repository includes vendored dependencies under `third_party/` so the versions used by DJOneHub remain reproducible. Their original copyright notices and license texts are retained in the corresponding directories.

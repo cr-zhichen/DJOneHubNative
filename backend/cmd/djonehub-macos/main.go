@@ -125,6 +125,9 @@ type app struct {
 
 	trafficMu        sync.Mutex
 	trafficBaselines map[string]networkByteCounters
+
+	// 分应用网络出口：配置默认关闭，运行时由独立页面显式启停。
+	routing *routingManager
 }
 
 type usbInterfaceStatus struct {
@@ -204,9 +207,16 @@ type networkCheckResult struct {
 func main() {
 	var port string
 	var listen string
+	routingSupervisor := registerRoutingSupervisorFlags()
 	flag.StringVar(&port, "port", "", "AT serial port; auto-detected when omitted")
 	flag.StringVar(&listen, "listen", "unix:/tmp/djonehub.sock", "HTTP listen address (unix:/path or host:port)")
 	flag.Parse()
+	if routingSupervisor.Enabled {
+		if err := runRoutingSupervisor(*routingSupervisor); err != nil {
+			log.Fatalf("routing supervisor: %v", err)
+		}
+		return
+	}
 
 	if strings.TrimSpace(port) == "" {
 		var err error
@@ -215,12 +225,12 @@ func main() {
 			usbDevice := discoverDJIUSBDevice()
 			usbATDevice, usbATErr := openDJIUSBAT()
 			instance := &app{
-				port:             "未发现 AT 串口",
-				discoveryError:   err.Error(),
-				usbDevice:        usbDevice,
-				usbAT:            usbATDevice,
-				smsPollInterval:  8 * time.Second,
-				smsReassembler:   smscodec.NewReassembler(),
+				port:            "未发现 AT 串口",
+				discoveryError:  err.Error(),
+				usbDevice:       usbDevice,
+				usbAT:           usbATDevice,
+				smsPollInterval: 8 * time.Second,
+				smsReassembler:  smscodec.NewReassembler(),
 			}
 			if usbDevice != nil {
 				log.Printf("DJI USB device detected without AT serial port: %s %s (%s:%s)",
@@ -336,6 +346,9 @@ func (a *app) installESIMManager(manager *esim.Manager, switchAllowed bool) bool
 }
 
 func serve(instance *app, listen string) {
+	if instance.routing != nil {
+		defer instance.routing.Close()
+	}
 	server := &http.Server{
 		Handler:           instance.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
@@ -744,6 +757,11 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/network/check-4g", a.check4GRoute)
 	mux.HandleFunc("GET /api/network/services", a.listNetworkServices)
 	mux.HandleFunc("PUT /api/network/services-order", a.setNetworkServicesOrder)
+	mux.HandleFunc("GET /api/routing", a.getRouting)
+	mux.HandleFunc("PUT /api/routing/config", a.updateRoutingConfig)
+	mux.HandleFunc("POST /api/routing/preflight", a.routingPreflight)
+	mux.HandleFunc("POST /api/routing/start", a.startRouting)
+	mux.HandleFunc("POST /api/routing/stop", a.stopRouting)
 	mux.HandleFunc("GET /api/call/status", a.callStatus)
 	mux.HandleFunc("GET /api/calls", a.listCalls)
 	mux.HandleFunc("POST /api/calls/clear", a.clearCalls)
@@ -1320,6 +1338,7 @@ func (a *app) initSMSArchive() {
 	a.dataDir = dir
 	a.smsArchive = newSMSArchive(filepath.Join(dir, "sms-archive.json"))
 	a.callLog = newCallLog(filepath.Join(dir, "call-log.json"))
+	a.routing = newRoutingManager(dir)
 	// 恢复接管模式状态
 	if data, err := os.ReadFile(filepath.Join(dir, "sms-adopt.json")); err == nil {
 		var state struct {

@@ -4,6 +4,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case home = "首页"
     case sms = "短信"
     case esim = "eSIM 卡片"
+    case routing = "应用分流"
     case debug = "调试与诊断"
     case about = "关于与更新"
 
@@ -14,6 +15,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .home: return "house.fill"
         case .sms: return "message.fill"
         case .esim: return "simcard.fill"
+        case .routing: return "point.3.connected.trianglepath.dotted"
         case .debug: return "terminal.fill"
         case .about: return "info.circle"
         }
@@ -112,6 +114,7 @@ struct ContentView: View {
         case .home: HomeView()
         case .sms: SMSView()
         case .esim: ESIMView()
+        case .routing: TrafficRoutingView()
         case .debug: DiagnosticsView()
         case .about: AboutView()
         }

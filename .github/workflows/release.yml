@@ -96,8 +96,25 @@ jobs:
             dist/DJOneHub-x86_64.app; do
             check_minos "$app/Contents/MacOS/DJOneHub"
             check_minos "$app/Contents/Resources/backend/djonehubd"
+            check_minos "$app/Contents/Resources/backend/sing-box"
             check_minos "$app/Contents/Resources/backend/libusb-1.0.0.dylib"
           done
+
+      - name: Package sing-box corresponding source
+        run: |
+          set -euo pipefail
+          SOURCE_DIR="$RUNNER_TEMP/sing-box-source"
+          git clone --quiet --depth 1 --branch v1.13.16 \
+            https://github.com/SagerNet/sing-box.git "$SOURCE_DIR"
+          ACTUAL_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+          EXPECTED_COMMIT="17ec3c71af8ca946dc50bf0d927c39fc77322aec"
+          [ "$ACTUAL_COMMIT" = "$EXPECTED_COMMIT" ] || {
+            echo "unexpected sing-box commit: $ACTUAL_COMMIT" >&2
+            exit 1
+          }
+          git -C "$SOURCE_DIR" archive --format=tar.gz \
+            --prefix=sing-box-1.13.16/ \
+            --output="$GITHUB_WORKSPACE/dist/sing-box-1.13.16-source.tar.gz" HEAD
 
       - name: Package DMGs
         run: |
@@ -142,5 +159,6 @@ jobs:
             dist/DJOneHub-${{ github.ref_name }}.dmg
             dist/DJOneHub-${{ github.ref_name }}-arm64.dmg
             dist/DJOneHub-${{ github.ref_name }}-x86_64.dmg
+            dist/sing-box-1.13.16-source.tar.gz
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: ${{ steps.release.outputs.exists != 'true' }}
