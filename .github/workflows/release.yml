@@ -113,6 +113,26 @@ jobs:
             echo "created dist/$DMG"
           done
 
+      - name: Check existing release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ERROR_FILE="$RUNNER_TEMP/release-check-error"
+
+          if gh api \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$TAG_NAME" \
+            >/dev/null 2>"$ERROR_FILE"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif grep -q "HTTP 404" "$ERROR_FILE"; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$ERROR_FILE" >&2
+            exit 1
+          fi
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -123,4 +143,4 @@ jobs:
             dist/DJOneHub-${{ github.ref_name }}-arm64.dmg
             dist/DJOneHub-${{ github.ref_name }}-x86_64.dmg
           prerelease: ${{ contains(github.ref_name, '-') }}
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.release.outputs.exists != 'true' }}
