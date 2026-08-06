@@ -127,3 +127,9 @@ API 模型与端点已通过无硬件环境自动验证（`app/Tests/APIProbe`�
 ## 许可证
 
 继承自上游：PolyForm Noncommercial License 1.0.0（仅限非商业用途），必须保留上游声明 `Copyright iniwex5 (https://github.com/iniwex5/vohive)`。详见 LICENSE 与 THIRD_PARTY_NOTICES.md。
+
+## 社区
+
+本项目的开发契机源于 [LINUX DO](https://linux.do/) 社区。在社区中了解到大疆第一代 4G 模块后，萌生出在此基础上开展相关研究与 DJOneHub 的原生 macOS 重制工作。
+
+作者社区主页：[zgccrui](https://linux.do/u/zgccrui)

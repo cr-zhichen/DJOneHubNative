@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="440" viewBox="0 0 660 440">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F9FCFF"/>
+      <stop offset="1" stop-color="#EEF6FF"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="660" height="440" fill="url(#background)"/>
+
+  <g text-anchor="middle" font-family="PingFang SC, PingFangSC, sans-serif">
+    <text x="330" y="86" font-size="17" font-weight="600" fill="#1F2A37">
+      将 DJOneHub 拖移到“应用程序”文件夹
+    </text>
+    <text x="330" y="111" font-size="12" font-weight="400" fill="#5F7184">
+      Drag DJOneHub to the Applications folder
+    </text>
+  </g>
+
+  <path
+    d="M 276 228 H 384 M 372 217 L 384 228 L 372 239"
+    fill="none"
+    stroke="#3F8FF7"
+    stroke-opacity="0.82"
+    stroke-width="4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
