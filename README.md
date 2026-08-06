@@ -69,6 +69,22 @@ mise run backend:test / backend:vet / backend:tidy
 
 需要：`mise`、Xcode（26 或更新）、`pkg-config`、`libusb`（brew）。发行版同时提供 universal / arm64 / x86_64 三种 DMG。
 
+## 开发与测试环境
+
+本软件目前的全部开发与测试均在 macOS 26 下完成。项目的最低部署目标仍为 macOS 13，但 macOS 13–25 尚未在真实设备上完成同等范围的验证。
+
+当前主要开发设备：
+
+| 项目 | 信息 |
+| --- | --- |
+| 设备 | MacBook Pro（Mac17,9） |
+| 芯片 | Apple M5 Pro（15 核） |
+| 内存 | 24 GB |
+| 架构 | arm64 |
+| 系统 | macOS 26.5.2（25F84） |
+| Xcode | 26.6（17F113） |
+| Go | 1.26.3（darwin/arm64） |
+
 ## 运行
 
 ```sh
@@ -99,8 +115,7 @@ open dist/DJOneHub-arm64.app
 - [x] 语音通话：来电自定义通知卡片（响铃 / 挂断 / 铃声选择 / 通话记录）
 - [ ] 分应用网络代理（按应用选择走模块网络）
 - [x] 软件开机自启与后台运行
-- [ ] 菜单栏显示网络信号与实时流量
-- [ ] 签名与公证
+- [x] 菜单栏显示（默认仅图标，可选信号强度与实时上下行速率）
 
 API 模型与端点已通过无硬件环境自动验证（`app/Tests/APIProbe`）；完整功能需接真机验证。
 

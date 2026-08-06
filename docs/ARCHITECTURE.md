@@ -20,6 +20,7 @@ DJOneHub.app
 | 文件 | 职责 |
 | --- | --- |
 | `app/Sources/BackendProcess.swift` | 子进程管理（自动启动/停止、socket 路径） |
+| `app/Sources/DJOneHubNativeApp.swift` | SwiftUI Window/MenuBarExtra 生命周期：macOS 15+ 原生静默启动、13–14 兼容分支、信号与实时流量 |
 | `app/Sources/DashboardStore.swift` | 首页数据缓存：2s 轮询（状态/流量/通话/短信接管同步） |
 | `app/Sources/UnixSocketURLProtocol.swift` | http+unix:// URLProtocol（POSIX socket + HTTP/1.1 解析，支持 Content-Length/chunked） |
 | `app/Sources/APIClient.swift` | URLSession 封装；dateEncodingStrategy = .iso8601（Go RFC3339） |

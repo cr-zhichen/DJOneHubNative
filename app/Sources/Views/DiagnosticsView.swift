@@ -1,13 +1,14 @@
 import SwiftUI
 import UserNotifications
 
-/// 调试与诊断：按功能分页组织（网络诊断 / AT 调试 / 通知调试），
+/// 调试与诊断：按功能分页组织（网络诊断 / AT 调试 / 通知调试 / 界面模式），
 /// 后续新增调试功能时新增一个 tab 及对应子视图即可，互不影响。
 struct DiagnosticsView: View {
     enum DebugTab: String, CaseIterable, Identifiable {
         case network = "网络诊断"
         case at = "AT 调试"
         case notify = "通知调试"
+        case interface = "界面模式"
 
         var id: String { rawValue }
     }
@@ -25,8 +26,119 @@ struct DiagnosticsView: View {
             DiagnosticNotifyView()
                 .tabItem { Label(DebugTab.notify.rawValue, systemImage: "bell") }
                 .tag(DebugTab.notify)
+            DiagnosticInterfaceView()
+                .tabItem { Label(DebugTab.interface.rawValue, systemImage: "macwindow") }
+                .tag(DebugTab.interface)
         }
         .navigationTitle("调试与诊断")
+    }
+}
+
+// MARK: - 界面模式
+
+struct DiagnosticInterfaceView: View {
+    @AppStorage(AppWindowLifecycleMode.storageKey) private var selectedModeRawValue =
+        AppWindowLifecycleMode.defaultMode.rawValue
+
+    private var selectedMode: Binding<AppWindowLifecycleMode> {
+        Binding(
+            get: {
+                AppWindowLifecycleMode(rawValue: selectedModeRawValue) ?? .defaultMode
+            },
+            set: { selectedModeRawValue = $0.rawValue })
+    }
+
+    private var storedMode: AppWindowLifecycleMode {
+        AppWindowLifecycleMode(rawValue: selectedModeRawValue) ?? .defaultMode
+    }
+
+    private var hasPendingRestart: Bool {
+        storedMode != AppRuntimeConfiguration.requestedWindowLifecycleMode
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("窗口生命周期").font(.headline)
+
+                Text("用于在高版本 macOS 上切换并调试主窗口的启动路径。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                Picker("窗口生命周期模式", selection: selectedMode) {
+                    ForEach(AppWindowLifecycleMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 360)
+
+                Text(modeDescription(for: storedMode))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Label(
+                    "当前进程：\(activeModeDescription)",
+                    systemImage: AppRuntimeConfiguration.usesModernSceneLifecycle
+                        ? "checkmark.circle.fill" : "wrench.and.screwdriver.fill")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                if hasPendingRestart {
+                    Label(
+                        "将切换为\(storedMode.displayName)，退出并重新打开应用后生效。",
+                        systemImage: "arrow.clockwise.circle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                }
+
+                Divider()
+
+                Text("模拟范围").font(.callout.bold())
+
+                Label {
+                    Text("兼容模式只会强制运行 macOS 13–14 的窗口创建、隐藏和唤起逻辑。")
+                } icon: {
+                    Image(systemName: "ladybug")
+                }
+                .font(.callout)
+
+                Label {
+                    Text("它不会修改当前系统版本，也无法让 macOS 26 的窗口、控件或液态玻璃还原成低版本样式。")
+                } icon: {
+                    Image(systemName: "info.circle")
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+                Text("如需查看真实的低版本默认 UI，需要在对应 macOS 版本的实机或虚拟机中运行。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollIndicators(.visible)
+    }
+
+    private var activeModeDescription: String {
+        if AppRuntimeConfiguration.usesModernSceneLifecycle {
+            return "默认模式（原生 SwiftUI Scene）"
+        }
+        if #available(macOS 15.0, *) {
+            return "兼容模式（已强制启用）"
+        }
+        return "兼容模式（系统自动）"
+    }
+
+    private func modeDescription(for mode: AppWindowLifecycleMode) -> String {
+        switch mode {
+        case .defaultMode:
+            return "macOS 15 及以上使用原生 Scene 启动抑制；macOS 13–14 自动使用兼容路径。"
+        case .compatibility:
+            return "在任意系统版本上强制先创建主窗口，再由旧生命周期逻辑隐藏或唤起。"
+        }
     }
 }
 

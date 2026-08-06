@@ -55,6 +55,7 @@ struct ContentView: View {
         }
         .onAppear {
             smsStore.viewingSMS = selection == .sms
+            showUpdatePrompt = updateChecker.pendingUpdate != nil
             // 启动即点击通知时，pendingOpenSender 可能早于 onChange 挂载设置，这里补一次
             if smsStore.pendingOpenSender != nil {
                 selection = .sms
