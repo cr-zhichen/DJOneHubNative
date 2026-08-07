@@ -51,15 +51,15 @@ Task {
             do {
                 let _: SMSSendResult = try await client.send("api/sms/send", body: SMSSendRequest(phone: "10086", message: "test"))
                 // 如果硬件存在则发送成功也 OK
-            } catch APIError.httpStatus(let code) {
-                try require(code >= 400, "unexpected status \(code)")
+            } catch let error as APIError {
+                try require(error.statusCode >= 400, "unexpected status \(error.statusCode)")
             }
         }
         await check("at (无硬件应报错)") {
             do {
                 let _: ATResult = try await client.send("api/at", body: ATRequest(command: "AT"))
-            } catch APIError.httpStatus(let code) {
-                try require(code >= 400, "unexpected status \(code)")
+            } catch let error as APIError {
+                try require(error.statusCode >= 400, "unexpected status \(error.statusCode)")
             }
         }
         await check("network diagnostic") {
@@ -74,12 +74,21 @@ Task {
             let r: CheckResult = try await client.send("api/network/check-4g")
             print("  ok=\(r.ok) \(r.summary ?? "-")")
         }
+        await check("routing config defaults to stopped runtime") {
+            let r: RoutingSnapshot = try await client.get("api/routing")
+            try require(!r.runtime.enabled, "routing must not auto-start")
+            print("  mode=\(r.config.mode.rawValue) rules=\(r.config.applications.count) core=\(r.capabilities.coreAvailable)")
+        }
+        await check("routing preflight") {
+            let r: RoutingPreflight = try await client.send("api/routing/preflight")
+            print("  ready=\(r.ready) conflicts=\(r.conflicts.count) issues=\(r.issues.count)")
+        }
         await check("esim overview (无硬件应 503)") {
             do {
                 let e: ESIMOverview = try await client.get("api/esim")
                 print("  card_type=\(e.cardType ?? "-") profiles=\(e.profiles?.flatMap { $0.profiles ?? [] }.count ?? 0)")
-            } catch APIError.httpStatus(let code) {
-                try require(code >= 400, "unexpected status \(code)")
+            } catch let error as APIError {
+                try require(error.statusCode >= 400, "unexpected status \(error.statusCode)")
             }
         }
         await check("esim notes (磁盘持久化应可用)") {

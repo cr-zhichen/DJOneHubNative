@@ -1,0 +1,10 @@
+diff --git a/route/process_cache.go b/route/process_cache.go
+index f99cebadb0f672d00202a308073069f79f060805..de4b7e651410982a37e4ec25c954932204d1cae3 100644
+--- a/route/process_cache.go
++++ b/route/process_cache.go
+@@ -39 +39,4 @@ func (r *Router) searchProcessInfo(ctx context.Context, metadata *adapter.InboundContext) {
+-	if r.processSearcher == nil || metadata.ProcessInfo != nil || !r.isLocalSource(metadata.Source.Addr) {
++	if r.processSearcher == nil || metadata.ProcessInfo != nil {
++		return
++	}
++	if !r.isLocalSource(metadata.Source.Addr) && metadata.Inbound != "tun-in" {

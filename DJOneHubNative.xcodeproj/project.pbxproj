@@ -10,9 +10,11 @@
 		0A0B94E9FDB31B67359D0BEA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB45AD6AB93DBA1F357E5695 /* ContentView.swift */; };
 		110A8BB4EA687024D52935B3 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF20520A20CFDC1ACF07AF4 /* DiagnosticsView.swift */; };
 		19688E1CE9B8EC8D2F96AC37 /* IncomingCallCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2E57514CD06B3BE5E853F33 /* IncomingCallCard.swift */; };
+		32737C7137357EA4DB902286 /* TrafficRoutingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBEB127E5FB81A8F005E5AD4 /* TrafficRoutingView.swift */; };
 		37D77738BD76FD01E4729F8B /* DJOneHubNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52CB97D70CF5A0A3680E4366 /* DJOneHubNativeApp.swift */; };
 		3B9EFAA1F7819AB214C13037 /* Awesome in Frameworks */ = {isa = PBXBuildFile; productRef = 7030065311E07B566AFA804E /* Awesome */; };
 		3D8A2111B885E70C6147874B /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A07D7E5C03CF4CC05E28A3 /* UpdateChecker.swift */; };
+		3F6C769CD04308BE9CA17D4E /* RoutingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA4E2ADFBEE34D33B207BBA4 /* RoutingModels.swift */; };
 		60159F5217ABF610D1D9B6B9 /* ESIMView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2726B5DD5C2CB2DB372DDF46 /* ESIMView.swift */; };
 		7132C6870A22C6E7C3CD0A9D /* SMSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FE8CEA7FD366A18D63D79BB /* SMSView.swift */; };
 		839CB9910988FF644BF48F48 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = EF323F316D84B16D3F424AA1 /* AppIcon.icon */; };
@@ -25,6 +27,7 @@
 		C856F18A2C9A8B48080E46E6 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = C84FC7D3D21A21CC374D0541 /* Models.swift */; };
 		CCDD69D5E523420BC2C5E3EE /* SMSStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5FE558AD4FEF1919375198D /* SMSStore.swift */; };
 		D17A5BEAA6B91E0CF4345CB7 /* AutoLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0C9E1750A28B9B4C02C072B /* AutoLaunch.swift */; };
+		D3238E4E67EDAA6BCCA830B5 /* RoutingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A480439FB5558538B8B6E0 /* RoutingStore.swift */; };
 		D95B716A9424825AF2E9CEB8 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2AA62D9556A49059333C15 /* AboutView.swift */; };
 		DCFA455CA254BA22DCE92D89 /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = C425E69F6A5C567C97D76733 /* BackendProcess.swift */; };
 		E0A176B7AED47B544F0DED92 /* Ringtones in Resources */ = {isa = PBXBuildFile; fileRef = 34932915608A3DAB57EDF189 /* Ringtones */; };
@@ -36,7 +39,6 @@
 		1FE8CEA7FD366A18D63D79BB /* SMSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMSView.swift; sourceTree = "<group>"; };
 		2726B5DD5C2CB2DB372DDF46 /* ESIMView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ESIMView.swift; sourceTree = "<group>"; };
 		34932915608A3DAB57EDF189 /* Ringtones */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Ringtones; path = app/Resources/Ringtones; sourceTree = SOURCE_ROOT; };
-		37DBF2924F3E9481FA911BAD /* DJOneHubNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DJOneHubNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A0F2EAECE7CE7153C43A13C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		52CB97D70CF5A0A3680E4366 /* DJOneHubNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DJOneHubNativeApp.swift; sourceTree = "<group>"; };
 		5511AFD27D1673297909199E /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
@@ -44,8 +46,12 @@
 		68E8A0F8DB72294EB7FB5DE2 /* CallHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHistoryView.swift; sourceTree = "<group>"; };
 		7B63FD8D7D1B1D51D06D23BD /* Ringtone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Ringtone.swift; sourceTree = "<group>"; };
 		8F658F8040ABB05665E2861A /* UnixSocketURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnixSocketURLProtocol.swift; sourceTree = "<group>"; };
+		9F1FA2273E18ABDD5B1D1B7C /* DJOneHub.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DJOneHub.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA4E2ADFBEE34D33B207BBA4 /* RoutingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutingModels.swift; sourceTree = "<group>"; };
+		BBEB127E5FB81A8F005E5AD4 /* TrafficRoutingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrafficRoutingView.swift; sourceTree = "<group>"; };
 		C06A5E003D640BB7E8549F26 /* AudioBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioBridge.swift; sourceTree = "<group>"; };
 		C0C9E1750A28B9B4C02C072B /* AutoLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoLaunch.swift; sourceTree = "<group>"; };
+		C1A480439FB5558538B8B6E0 /* RoutingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutingStore.swift; sourceTree = "<group>"; };
 		C425E69F6A5C567C97D76733 /* BackendProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcess.swift; sourceTree = "<group>"; };
 		C5FE558AD4FEF1919375198D /* SMSStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMSStore.swift; sourceTree = "<group>"; };
 		C84FC7D3D21A21CC374D0541 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -99,6 +105,8 @@
 				F2E57514CD06B3BE5E853F33 /* IncomingCallCard.swift */,
 				C84FC7D3D21A21CC374D0541 /* Models.swift */,
 				7B63FD8D7D1B1D51D06D23BD /* Ringtone.swift */,
+				AA4E2ADFBEE34D33B207BBA4 /* RoutingModels.swift */,
+				C1A480439FB5558538B8B6E0 /* RoutingStore.swift */,
 				C5FE558AD4FEF1919375198D /* SMSStore.swift */,
 				8F658F8040ABB05665E2861A /* UnixSocketURLProtocol.swift */,
 				E6A07D7E5C03CF4CC05E28A3 /* UpdateChecker.swift */,
@@ -118,7 +126,7 @@
 		A82E1B692B5F694FE3118B0D /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				37DBF2924F3E9481FA911BAD /* DJOneHubNative.app */,
+				9F1FA2273E18ABDD5B1D1B7C /* DJOneHub.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -133,6 +141,7 @@
 				2726B5DD5C2CB2DB372DDF46 /* ESIMView.swift */,
 				DC11388FA67B835A55D6B961 /* HomeView.swift */,
 				1FE8CEA7FD366A18D63D79BB /* SMSView.swift */,
+				BBEB127E5FB81A8F005E5AD4 /* TrafficRoutingView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -168,7 +177,7 @@
 				7030065311E07B566AFA804E /* Awesome */,
 			);
 			productName = DJOneHubNative;
-			productReference = 37DBF2924F3E9481FA911BAD /* DJOneHubNative.app */;
+			productReference = 9F1FA2273E18ABDD5B1D1B7C /* DJOneHub.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -238,7 +247,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "#!/bin/sh\nset -eu\n\ncd \"${PROJECT_DIR}/backend\"\nexport CGO_ENABLED=1 GOOS=darwin\nexport GOCACHE=\"${TARGET_TEMP_DIR}/gocache\"\nexport PKG_CONFIG_PATH=\"${PKG_CONFIG_PATH:-/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig}\"\n\nlibusb_for() {\n  case \"$1\" in\n    x86_64) echo \"${LIBUSB_DYLIB_X86_64:-/usr/local/opt/libusb/lib/libusb-1.0.0.dylib}\" ;;\n    *)      echo \"${LIBUSB_DYLIB_ARM64:-/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib}\" ;;\n  esac\n}\n\ngoarch() { [ \"$1\" = \"x86_64\" ] && echo \"amd64\" || echo \"arm64\"; }\n\n# 编译后端（按 ARCHS，支持 universal）\nmkdir -p \"${TARGET_TEMP_DIR}/backend\"\nfor a in ${ARCHS}; do\n  mkdir -p \"${TARGET_TEMP_DIR}/backend/${a}\"\n  GOARCH=\"$(goarch \"$a\")\" go build -trimpath -ldflags=\"-s -w\" \\\n    -o \"${TARGET_TEMP_DIR}/backend/${a}/djonehubd\" ./cmd/djonehub-macos\ndone\n\n# 合并到 app 资源目录\nBACKEND_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/backend\"\nrm -rf \"${BACKEND_DIR}\"\nmkdir -p \"${BACKEND_DIR}\"\nfor a in ${ARCHS}; do\n  cp \"${TARGET_TEMP_DIR}/backend/${a}/djonehubd\" \"${BACKEND_DIR}/djonehubd.${a}\"\ndone\nif [ \"$(echo ${ARCHS} | wc -w)\" -gt 1 ]; then\n  lipo -create \"${BACKEND_DIR}\"/djonehubd.* -output \"${BACKEND_DIR}/djonehubd\"\n  rm -f \"${BACKEND_DIR}\"/djonehubd.*\nelse\n  mv \"${BACKEND_DIR}/djonehubd.${ARCHS}\" \"${BACKEND_DIR}/djonehubd\"\nfi\n\n# libusb：按架构拷贝（universal 时优先用胖文件，否则 lipo 合并）并改为 @loader_path 引用\nif [ \"$(echo ${ARCHS} | wc -w)\" -gt 1 ]; then\n  UB=$(libusb_for \"$(echo ${ARCHS} | awk '{print $1}')\")\n  FAT=0\n  if [ -f \"$UB\" ]; then\n    info=$(lipo -info \"$UB\" 2>/dev/null || true)\n    case \"$info\" in *\"Architectures in the fat file\"*) FAT=1 ;; esac\n    if [ \"$FAT\" = \"1\" ]; then\n      for a in ${ARCHS}; do\n        echo \"$info\" | grep -q \"$a\" || { FAT=0; break; }\n      done\n    fi\n  fi\n  if [ \"$FAT\" = \"1\" ]; then\n    cp \"$UB\" \"${BACKEND_DIR}/libusb-1.0.0.dylib\"\n  else\n    FOUND=\"\"\n    for a in ${ARCHS}; do\n      LIBUSB=$(libusb_for \"$a\")\n      [ -f \"$LIBUSB\" ] || continue\n      cp \"$LIBUSB\" \"${BACKEND_DIR}/libusb.${a}\"\n      FOUND=\"$a\"\n    done\n    [ -n \"$FOUND\" ] || { echo \"错误：未找到 libusb，请设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64\" >&2; exit 1; }\n    lipo -create \"${BACKEND_DIR}\"/libusb.* -output \"${BACKEND_DIR}/libusb-1.0.0.dylib\"\n    rm -f \"${BACKEND_DIR}\"/libusb.*\n  fi\nelse\n  LIBUSB=$(libusb_for \"$ARCHS\")\n  [ -f \"$LIBUSB\" ] || { echo \"错误：未找到 libusb (${LIBUSB})，请设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64\" >&2; exit 1; }\n  cp \"$LIBUSB\" \"${BACKEND_DIR}/libusb-1.0.0.dylib\"\nfi\nold=$(otool -L \"${BACKEND_DIR}/djonehubd\" 2>/dev/null | awk '/libusb/ {print $1; exit}')\nif [ -n \"$old\" ]; then\n  install_name_tool -change \"$old\" \"@loader_path/libusb-1.0.0.dylib\" \"${BACKEND_DIR}/djonehubd\" || true\nfi\n";
+			shellScript = "#!/bin/sh\nset -eu\n\ncd \"${PROJECT_DIR}/backend\"\nexport CGO_ENABLED=1 GOOS=darwin\nexport GOCACHE=\"${TARGET_TEMP_DIR}/gocache\"\nexport PKG_CONFIG_PATH=\"${PKG_CONFIG_PATH:-/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig}\"\n\nlibusb_for() {\n  case \"$1\" in\n    x86_64) echo \"${LIBUSB_DYLIB_X86_64:-/usr/local/opt/libusb/lib/libusb-1.0.0.dylib}\" ;;\n    *)      echo \"${LIBUSB_DYLIB_ARM64:-/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib}\" ;;\n  esac\n}\n\ngoarch() { [ \"$1\" = \"x86_64\" ] && echo \"amd64\" || echo \"arm64\"; }\n\n# 编译后端（按 ARCHS，支持 universal）\nmkdir -p \"${TARGET_TEMP_DIR}/backend\"\nfor a in ${ARCHS}; do\n  mkdir -p \"${TARGET_TEMP_DIR}/backend/${a}\"\n  GOARCH=\"$(goarch \"$a\")\" go build -trimpath -ldflags=\"-s -w\" \\\n    -o \"${TARGET_TEMP_DIR}/backend/${a}/djonehubd\" ./cmd/djonehub-macos\n  GOARCH=\"$(goarch \"$a\")\" go build -trimpath \\\n    -ldflags=\"-linkmode external -extldflags=-mmacosx-version-min=13.0 -s -w\" \\\n    -o \"${TARGET_TEMP_DIR}/backend/${a}/djonehub-routing-helper\" ./cmd/djonehub-routing-helper\ndone\n\n# 合并到 app 资源目录\nBACKEND_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/backend\"\nrm -rf \"${BACKEND_DIR}\"\nmkdir -p \"${BACKEND_DIR}\"\nfor a in ${ARCHS}; do\n  cp \"${TARGET_TEMP_DIR}/backend/${a}/djonehubd\" \"${BACKEND_DIR}/djonehubd.${a}\"\ndone\nif [ \"$(echo ${ARCHS} | wc -w)\" -gt 1 ]; then\n  lipo -create \"${BACKEND_DIR}\"/djonehubd.* -output \"${BACKEND_DIR}/djonehubd\"\n  rm -f \"${BACKEND_DIR}\"/djonehubd.*\nelse\n  mv \"${BACKEND_DIR}/djonehubd.${ARCHS}\" \"${BACKEND_DIR}/djonehubd\"\nfi\nfor a in ${ARCHS}; do\n  cp \"${TARGET_TEMP_DIR}/backend/${a}/djonehub-routing-helper\" \"${BACKEND_DIR}/djonehub-routing-helper.${a}\"\ndone\nif [ \"$(echo ${ARCHS} | wc -w)\" -gt 1 ]; then\n  lipo -create \"${BACKEND_DIR}\"/djonehub-routing-helper.* -output \"${BACKEND_DIR}/djonehub-routing-helper\"\n  rm -f \"${BACKEND_DIR}\"/djonehub-routing-helper.*\nelse\n  mv \"${BACKEND_DIR}/djonehub-routing-helper.${ARCHS}\" \"${BACKEND_DIR}/djonehub-routing-helper\"\nfi\n\n# libusb：按架构拷贝（universal 时优先用胖文件，否则 lipo 合并）并改为 @loader_path 引用\nif [ \"$(echo ${ARCHS} | wc -w)\" -gt 1 ]; then\n  UB=$(libusb_for \"$(echo ${ARCHS} | awk '{print $1}')\")\n  FAT=0\n  if [ -f \"$UB\" ]; then\n    info=$(lipo -info \"$UB\" 2>/dev/null || true)\n    case \"$info\" in *\"Architectures in the fat file\"*) FAT=1 ;; esac\n    if [ \"$FAT\" = \"1\" ]; then\n      for a in ${ARCHS}; do\n        echo \"$info\" | grep -q \"$a\" || { FAT=0; break; }\n      done\n    fi\n  fi\n  if [ \"$FAT\" = \"1\" ]; then\n    cp \"$UB\" \"${BACKEND_DIR}/libusb-1.0.0.dylib\"\n  else\n    FOUND=\"\"\n    for a in ${ARCHS}; do\n      LIBUSB=$(libusb_for \"$a\")\n      [ -f \"$LIBUSB\" ] || continue\n      cp \"$LIBUSB\" \"${BACKEND_DIR}/libusb.${a}\"\n      FOUND=\"$a\"\n    done\n    [ -n \"$FOUND\" ] || { echo \"错误：未找到 libusb，请设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64\" >&2; exit 1; }\n    lipo -create \"${BACKEND_DIR}\"/libusb.* -output \"${BACKEND_DIR}/libusb-1.0.0.dylib\"\n    rm -f \"${BACKEND_DIR}\"/libusb.*\n  fi\nelse\n  LIBUSB=$(libusb_for \"$ARCHS\")\n  [ -f \"$LIBUSB\" ] || { echo \"错误：未找到 libusb (${LIBUSB})，请设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64\" >&2; exit 1; }\n  cp \"$LIBUSB\" \"${BACKEND_DIR}/libusb-1.0.0.dylib\"\nfi\nold=$(otool -L \"${BACKEND_DIR}/djonehubd\" 2>/dev/null | awk '/libusb/ {print $1; exit}')\nif [ -n \"$old\" ]; then\n  install_name_tool -change \"$old\" \"@loader_path/libusb-1.0.0.dylib\" \"${BACKEND_DIR}/djonehubd\" || true\nfi\n\n# 独立进程网络核心：固定源码提交构建，保持与主后端许可证边界分离。\n\"${PROJECT_DIR}/scripts/build-network-core.sh\" \\\n  \"${BACKEND_DIR}\" \"${TARGET_TEMP_DIR}/network-core\" ${ARCHS}\n\n# 所有嵌套 Mach-O 在 lipo/install_name_tool 完成后统一进行 ad-hoc 签名。\nfor code in \\\n  \"${BACKEND_DIR}/libusb-1.0.0.dylib\" \\\n  \"${BACKEND_DIR}/djonehubd\" \\\n  \"${BACKEND_DIR}/djonehub-routing-helper\" \\\n  \"${BACKEND_DIR}/sing-box\"; do\n  /usr/bin/codesign --force --sign - --timestamp=none \"$code\"\ndone\n\n# 增量构建时 Xcode 可能跳过外层签名；重新封装资源签名，首次构建仍会由 Xcode 最终签名覆盖。\nAPP_BUNDLE=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\"\nif [ -d \"${APP_BUNDLE}\" ]; then\n  /usr/bin/codesign --force --sign - --timestamp=none \"${APP_BUNDLE}\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -262,8 +271,11 @@
 				19688E1CE9B8EC8D2F96AC37 /* IncomingCallCard.swift in Sources */,
 				C856F18A2C9A8B48080E46E6 /* Models.swift in Sources */,
 				A122D9632A78D37E4E440DBE /* Ringtone.swift in Sources */,
+				3F6C769CD04308BE9CA17D4E /* RoutingModels.swift in Sources */,
+				D3238E4E67EDAA6BCCA830B5 /* RoutingStore.swift in Sources */,
 				CCDD69D5E523420BC2C5E3EE /* SMSStore.swift in Sources */,
 				7132C6870A22C6E7C3CD0A9D /* SMSView.swift in Sources */,
+				32737C7137357EA4DB902286 /* TrafficRoutingView.swift in Sources */,
 				E7EBC99E07FAFF36998EB28F /* UnixSocketURLProtocol.swift in Sources */,
 				3D8A2111B885E70C6147874B /* UpdateChecker.swift in Sources */,
 			);

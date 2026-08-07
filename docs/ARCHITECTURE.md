@@ -62,6 +62,27 @@ DJOneHub.app
 - app 启动自动拉起后端、退出自动停止（无手动开关）
 - `BackendProcess.start()` 的 guard 写法注意：`state == .failed("")` 永远不匹配，失败后无法重启——用 `if case .running = state, process?.isRunning == true { return }`
 
+### 6. 应用分流（默认关闭）
+
+- 页面：`TrafficRoutingView`；配置：`~/Library/Application Support/DJOneHubNative/network-routing.json`
+- 运行状态不持久化：每次启动 DJOneHub 后均为关闭，只有用户在页面显式启用才启动网络核心
+- 独立分流：sing-box 以单独的管理员监督进程运行一个 TUN；`.app` 包内主进程与辅助进程按 `process_path_regex` 匹配
+  - `module_direct`：出站强制绑定 Baiwang 对应网卡
+  - `system_direct`：交给启动时自动识别的系统默认出口
+  - `system_socks`：交给指定 SOCKS5；4G 路径不会进入该出口
+- Clash 代管：不创建 TUN，只在 `127.0.0.1` 提供 SOCKS5，TCP/UDP 出站强制绑定 Baiwang 网卡
+- 独立模式启动前解析 IPv4 路由表，只阻止正在通过 `utun` 接管大范围路由的工具；不会按系统中的 `utun` 数量误判
+- 4G/SOCKS 连接失败均保持失败关闭，不自动回落到系统直连
+- 管理员监督进程通过仅当前用户可访问的 Unix socket 接受 `STATUS/STOP`；父后端退出后自动终止核心并让 sing-box 清理路由
+- 网络核心固定为 sing-box 1.13.16、独立进程运行，并从固定提交按 macOS 13.0 最低版本构建；详见 `scripts/build-network-core.sh` 与 `THIRD_PARTY_NOTICES.md`
+
+相关 API：
+
+- `GET /api/routing`：配置、运行状态与核心能力
+- `PUT /api/routing/config`：仅停用状态可保存配置
+- `POST /api/routing/preflight`：模块网卡、系统出口、端口与 TUN 冲突检查
+- `POST /api/routing/start`、`POST /api/routing/stop`：显式启停
+
 ## 踩坑记录
 
 1. **日期解析**：Go time.Time 输出 RFC3339Nano（可能带小数秒），Swift 需自定义日期解析（ISO8601 带/不带小数秒都试）

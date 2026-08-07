@@ -13,7 +13,7 @@ struct APIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [UnixSocketURLProtocol.self]
         config.timeoutIntervalForRequest = timeoutInterval
-        config.timeoutIntervalForResource = 60
+        config.timeoutIntervalForResource = max(60, timeoutInterval)
         session = URLSession(configuration: config)
 
         // Go 端 time.Time 输出 RFC3339Nano，可能带小数秒
@@ -38,7 +38,7 @@ struct APIClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         let (data, response) = try await session.data(for: request)
-        try Self.validate(response)
+        try Self.validate(response, data: data)
         return try decoder.decode(T.self, from: data)
     }
 
@@ -56,7 +56,7 @@ struct APIClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         let (data, response) = try await session.data(for: request)
-        try Self.validate(response)
+        try Self.validate(response, data: data)
         return try decoder.decode(T.self, from: data)
     }
 
@@ -68,24 +68,40 @@ struct APIClient {
             request.httpBody = try encoder.encode(body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (_, response) = try await session.data(for: request)
-        try Self.validate(response)
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response, data: data)
     }
 
-    private static func validate(_ response: URLResponse) throws {
+    private static func validate(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard (200..<300).contains(http.statusCode) else {
+            if let payload = try? JSONDecoder().decode(APIErrorPayload.self, from: data),
+               !payload.error.isEmpty {
+                throw APIError.server(http.statusCode, payload.error)
+            }
             throw APIError.httpStatus(http.statusCode)
         }
     }
 }
 
+private struct APIErrorPayload: Decodable {
+    let error: String
+}
+
 enum APIError: LocalizedError {
     case httpStatus(Int)
+    case server(Int, String)
+
+    var statusCode: Int {
+        switch self {
+        case .httpStatus(let code), .server(let code, _): return code
+        }
+    }
 
     var errorDescription: String? {
         switch self {
         case .httpStatus(let code): return "服务返回错误（HTTP \(code)）"
+        case .server(_, let message): return message
         }
     }
 }
