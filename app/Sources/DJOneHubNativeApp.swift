@@ -357,20 +357,11 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
         let displayOptions = MenuBarDisplayOptions()
 
         if isStale {
-            let image: NSImage?
-            if displayOptions.showSignal {
-                image = NSImage(
-                    systemSymbolName: "exclamationmark.triangle",
-                    accessibilityDescription: "网络状态暂时不可用")
-            } else {
-                image = NSImage(
-                    systemSymbolName: "antenna.radiowaves.left.and.right",
-                    accessibilityDescription: "DJOneHub")
-            }
             menuBarPresentation = MenuBarPresentation(
-                image: image,
-                title: selectedRateTitle(
-                    options: displayOptions, download: "—", upload: "—"),
+                image: menuBarImage(
+                    options: displayOptions,
+                    unavailableDescription: "网络状态暂时不可用"),
+                rateTitles: displayOptions.rateTitles(download: "—", upload: "—"),
                 networkSummary: "网络状态暂时不可用",
                 trafficSummary: "等待下一次刷新…")
             return
@@ -379,24 +370,19 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
         if let hardwareStatus = status?.hardwareStatus, !hardwareStatus.isEmpty {
             resetTrafficRate()
             menuBarPresentation = MenuBarPresentation(
-                image: NSImage(
-                    systemSymbolName: "antenna.radiowaves.left.and.right",
-                    accessibilityDescription: "未检测到模块"),
-                title: selectedRateTitle(
-                    options: displayOptions, download: "—", upload: "—"),
+                image: menuBarImage(
+                    options: displayOptions,
+                    unavailableDescription: "未检测到模块"),
+                rateTitles: displayOptions.rateTitles(download: "—", upload: "—"),
                 networkSummary: "未检测到模块",
                 trafficSummary: "实时流量不可用")
             return
         }
 
-        let image: NSImage?
-        if displayOptions.showSignal, let signalDBM = status?.signalDbm {
-            image = signalImage(for: signalDBM)
-        } else {
-            image = NSImage(
-                systemSymbolName: "antenna.radiowaves.left.and.right",
-                accessibilityDescription: "DJOneHub 网络信号")
-        }
+        let image = menuBarImage(
+            options: displayOptions,
+            signalDBM: status?.signalDbm,
+            unavailableDescription: status == nil ? "正在读取网络信号" : "蜂窝信号暂时不可用")
 
         let operatorName = status?.operatorName?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -419,43 +405,50 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
             networkSummary = summaryParts.joined(separator: " · ")
         }
 
-        let title: String
+        let rateTitles: MenuBarRateTitles
         let trafficSummary: String
         if traffic?.available == true {
             let download = formatRate(downloadBytesPerSecond)
             let upload = formatRate(uploadBytesPerSecond)
-            title = selectedRateTitle(
-                options: displayOptions, download: download, upload: upload)
+            rateTitles = displayOptions.rateTitles(download: download, upload: upload)
             if downloadBytesPerSecond == nil || uploadBytesPerSecond == nil {
                 trafficSummary = "正在计算实时流量…"
             } else {
                 trafficSummary = "下载 \(download)  ·  上传 \(upload)"
             }
         } else {
-            title = selectedRateTitle(
-                options: displayOptions, download: "—", upload: "—")
+            rateTitles = displayOptions.rateTitles(download: "—", upload: "—")
             trafficSummary = traffic == nil
                 ? "实时流量等待采样…" : "实时流量不可用"
         }
 
         menuBarPresentation = MenuBarPresentation(
             image: image,
-            title: title,
+            rateTitles: rateTitles,
             networkSummary: networkSummary,
             trafficSummary: trafficSummary)
     }
 
-    private func selectedRateTitle(
-        options: MenuBarDisplayOptions, download: String, upload: String
-    ) -> String {
-        var parts: [String] = []
-        if options.showDownload {
-            parts.append("↓\(download)")
+    private func menuBarImage(
+        options: MenuBarDisplayOptions,
+        signalDBM: Int? = nil,
+        unavailableDescription: String
+    ) -> NSImage? {
+        if options.showSignal {
+            if let signalDBM {
+                return signalImage(for: signalDBM)
+            }
+            return NSImage(
+                systemSymbolName: "exclamationmark.triangle",
+                accessibilityDescription: unavailableDescription)
         }
-        if options.showUpload {
-            parts.append("↑\(upload)")
+
+        guard !options.hasSelection else {
+            return nil
         }
-        return parts.joined(separator: "  ")
+        return NSImage(
+            systemSymbolName: "antenna.radiowaves.left.and.right",
+            accessibilityDescription: "DJOneHub")
     }
 
     private func signalImage(for dbm: Int) -> NSImage {
@@ -464,11 +457,19 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
             return cached
         }
 
-        let image = NSImage(size: NSSize(width: 15, height: 14), flipped: false) { _ in
+        let imageWidth = CGFloat(15)
+        let barWidth = CGFloat(2.6)
+        let barStep = CGFloat(3.7)
+        let barsWidth = barStep * 3 + barWidth
+        let leadingInset = (imageWidth - barsWidth) / 2
+        let image = NSImage(size: NSSize(width: imageWidth, height: 14), flipped: false) { _ in
             for index in 0..<4 {
                 let height = CGFloat(4 + index * 3)
                 let rect = NSRect(
-                    x: CGFloat(index) * 3.7, y: 1, width: 2.6, height: height)
+                    x: leadingInset + CGFloat(index) * barStep,
+                    y: 1,
+                    width: barWidth,
+                    height: height)
                 let path = NSBezierPath(
                     roundedRect: rect, xRadius: 0.8, yRadius: 0.8)
                 NSColor.black.withAlphaComponent(index < level ? 1 : 0.24).setFill()
@@ -573,7 +574,7 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
 
 struct MenuBarPresentation {
     let image: NSImage?
-    let title: String
+    let rateTitles: MenuBarRateTitles
     let networkSummary: String
     let trafficSummary: String
 
@@ -582,11 +583,23 @@ struct MenuBarPresentation {
     }
 
     static var loading: MenuBarPresentation {
-        MenuBarPresentation(
-            image: NSImage(
+        let displayOptions = MenuBarDisplayOptions()
+        let image: NSImage?
+        if displayOptions.showSignal {
+            image = NSImage(
+                systemSymbolName: "ellipsis",
+                accessibilityDescription: "正在读取网络信号")
+        } else if displayOptions.hasSelection {
+            image = nil
+        } else {
+            image = NSImage(
                 systemSymbolName: "antenna.radiowaves.left.and.right",
-                accessibilityDescription: "DJOneHub"),
-            title: "",
+                accessibilityDescription: "DJOneHub")
+        }
+
+        return MenuBarPresentation(
+            image: image,
+            rateTitles: displayOptions.rateTitles(download: "—", upload: "—"),
             networkSummary: "正在读取网络状态…",
             trafficSummary: "实时流量等待采样…")
     }
@@ -604,13 +617,17 @@ private struct MenuBarStatusLabel: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(alignment: .center, spacing: 3.5) {
             if let image = presentation.image {
                 Image(nsImage: image)
                     .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 15, height: 14, alignment: .center)
             }
-            if !presentation.title.isEmpty {
-                Text(presentation.title)
+            if let title = presentation.rateTitles.combined {
+                Text(title)
+                    .font(.caption2)
                     .monospacedDigit()
             }
         }
@@ -685,6 +702,35 @@ struct MenuBarDisplayOptions {
         showSignal = defaults.bool(forKey: Self.showSignalKey)
         showDownload = defaults.bool(forKey: Self.showDownloadKey)
         showUpload = defaults.bool(forKey: Self.showUploadKey)
+    }
+
+    var hasSelection: Bool {
+        showSignal || showDownload || showUpload
+    }
+
+    func rateTitles(download: String, upload: String) -> MenuBarRateTitles {
+        MenuBarRateTitles(
+            download: showDownload ? "↓\(download)" : nil,
+            upload: showUpload ? "↑\(upload)" : nil)
+    }
+}
+
+struct MenuBarRateTitles {
+    let download: String?
+    let upload: String?
+
+    var combined: String? {
+        switch (download, upload) {
+        case let (download?, upload?):
+            // U+2004 在 macOS caption2 字体下约 3.45pt，与图文间距保持一致。
+            return "\(download)\u{2004}\(upload)"
+        case let (download?, nil):
+            return download
+        case let (nil, upload?):
+            return upload
+        case (nil, nil):
+            return nil
+        }
     }
 }
 

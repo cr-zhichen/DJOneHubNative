@@ -50,6 +50,14 @@ description = "启动已构建的 app（本机架构优先，其次通用包）"
 dir = "."
 run = "open dist/DJOneHub-$(uname -m).app 2>/dev/null || open dist/DJOneHub.app"
 
+[tasks.kill]
+description = "停止正在运行的 DJOneHub 及其后端"
+dir = "."
+run = [
+  "pkill -x DJOneHub 2>/dev/null || true",
+  "pkill -x djonehubd 2>/dev/null || true",
+]
+
 [tasks.clean]
 description = "清理 build/ 与 dist/"
 dir = "."
