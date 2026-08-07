@@ -22,8 +22,15 @@ DJOneHub is a focused macOS utility for operating a connected 4G module. The int
 ## Application routing interaction contract
 
 - Routing is off after every DJOneHub launch. Configuration persists; enabled runtime state does not.
+- Independent routing installs its privileged TUN service on first enable. Ordinary Stop and app exit stop the TUN but keep that service installed, so later enables do not request authorization again.
+- A secondary destructive `卸载…` action appears only when the TUN service is installed. It confirms intent, stops an active independent session first, removes all privileged components, and preserves routing configuration; the next enable requests administrator authorization again.
+- Independent routing exposes one explicit default exit. Per-application rules override it; existing version 1 configurations migrate to `系统直连` without dropping application rules.
 - The two modes are mutually exclusive:
-  - `独立分流` owns the single TUN and application rules. `4G 直连` never uses SOCKS; unlisted applications use the system default network.
+  - `独立分流` owns the single TUN and application rules. Its default exit can be `系统直连`, `4G 直连`, or `系统侧 SOCKS`; per-application rules remain explicit overrides.
+  - Independent routing uses the gVisor TUN stack on macOS for both TCP and UDP. This avoids the mixed stack's system-TCP NAT path, which can drop IPv4 TCP before an outbound rule is selected.
+  - `4G 直连` is dual-stack. The generated core configuration binds IPv4 and any available global IPv6 source address to the module interface; DNS from module-routed applications is handled by the module gateway so unsupported record types on the system resolver cannot stall Chromium. Preflight reports when the module has no usable IPv6 address or scoped default route.
+  - The OpenClash/Clash Fake-IP benchmark range `198.18.0.0/15` bypasses the DJOneHub TUN and remains owned by the system network. This preserves an upstream router's transparent proxy mapping and avoids re-encapsulating unlisted applications' QUIC traffic.
+  - A loopback `系统侧 SOCKS` listener is resolved to its owning process before start whenever that process would otherwise re-enter the TUN. The process is routed through `系统直连`; an unbound port or unresolved process blocks start instead of creating a proxy loop.
   - `Clash 代管` creates no DJOneHub TUN. It exposes a loopback SOCKS5 endpoint bound outward to the 4G interface, while Clash owns application selection and TUN routing.
 - Editing, saving, and enabling are separate states. Any edit invalidates the previous preflight result. The user must explicitly save, obtain a current successful preflight, and then enable.
 - Configuration controls lock while saving, switching state, or running. A running session must always retain a usable Stop control, even if the packaged network core later becomes unavailable.

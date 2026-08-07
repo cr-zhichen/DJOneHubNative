@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,14 +10,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 )
 
 const (
-	routingConfigVersion = 1
+	routingConfigVersion = 2
 
 	routingModeIndependent = "independent"
 	routingModeClash       = "clash"
@@ -45,6 +49,7 @@ type routingSOCKSConfig struct {
 type routingConfig struct {
 	Version         int                  `json:"version"`
 	Mode            string               `json:"mode"`
+	DefaultAction   string               `json:"default_action"`
 	Applications    []routingApplication `json:"applications"`
 	SystemSOCKS     routingSOCKSConfig   `json:"system_socks"`
 	ClashListenPort int                  `json:"clash_listen_port"`
@@ -57,8 +62,10 @@ type routingConflict struct {
 }
 
 type routingInterfaceInfo struct {
-	Name string `json:"name"`
-	IPv4 string `json:"ipv4"`
+	Name        string `json:"name"`
+	IPv4        string `json:"ipv4"`
+	IPv4Gateway string `json:"ipv4_gateway,omitempty"`
+	IPv6        string `json:"ipv6,omitempty"`
 }
 
 type routingPreflight struct {
@@ -70,12 +77,15 @@ type routingPreflight struct {
 	Conflicts       []routingConflict     `json:"conflicts"`
 	Issues          []string              `json:"issues"`
 	Warnings        []string              `json:"warnings"`
+
+	SystemSOCKSBypassPatterns []string `json:"-"`
 }
 
 func defaultRoutingConfig() routingConfig {
 	return routingConfig{
 		Version:         routingConfigVersion,
 		Mode:            routingModeIndependent,
+		DefaultAction:   routingActionSystemDirect,
 		Applications:    []routingApplication{},
 		SystemSOCKS:     routingSOCKSConfig{Server: "127.0.0.1", Port: 7891},
 		ClashListenPort: 17890,
@@ -90,7 +100,7 @@ func cloneRoutingConfig(config routingConfig) routingConfig {
 }
 
 func normalizeRoutingConfig(config routingConfig) (routingConfig, error) {
-	if config.Version == 0 {
+	if config.Version == 0 || config.Version == 1 {
 		config.Version = routingConfigVersion
 	}
 	if config.Version != routingConfigVersion {
@@ -102,6 +112,13 @@ func normalizeRoutingConfig(config routingConfig) (routingConfig, error) {
 	}
 	if config.Mode != routingModeIndependent && config.Mode != routingModeClash {
 		return routingConfig{}, errors.New("分流模式必须是 independent 或 clash")
+	}
+	config.DefaultAction = strings.TrimSpace(config.DefaultAction)
+	if config.DefaultAction == "" {
+		config.DefaultAction = routingActionSystemDirect
+	}
+	if !isRoutingAction(config.DefaultAction) {
+		return routingConfig{}, errors.New("默认出口使用了未知的出口规则")
 	}
 	if config.ClashListenPort == 0 {
 		config.ClashListenPort = 17890
@@ -124,7 +141,7 @@ func normalizeRoutingConfig(config routingConfig) (routingConfig, error) {
 	}
 	seen := make(map[string]struct{}, len(config.Applications))
 	cleaned := make([]routingApplication, 0, len(config.Applications))
-	usesSOCKS := false
+	usesSOCKS := config.Mode == routingModeIndependent && config.DefaultAction == routingActionSystemSOCKS
 	for index, application := range config.Applications {
 		application.ID = strings.TrimSpace(application.ID)
 		application.Name = strings.TrimSpace(application.Name)
@@ -154,7 +171,7 @@ func normalizeRoutingConfig(config routingConfig) (routingConfig, error) {
 		switch application.Action {
 		case routingActionModuleDirect, routingActionSystemDirect:
 		case routingActionSystemSOCKS:
-			usesSOCKS = true
+			usesSOCKS = usesSOCKS || config.Mode == routingModeIndependent
 		default:
 			return routingConfig{}, fmt.Errorf("%s 使用了未知的出口规则", application.Name)
 		}
@@ -169,10 +186,19 @@ func normalizeRoutingConfig(config routingConfig) (routingConfig, error) {
 
 	if usesSOCKS {
 		if config.SystemSOCKS.Server == "" || config.SystemSOCKS.Port == 0 {
-			return routingConfig{}, errors.New("存在“系统侧 SOCKS”应用规则，请先填写 SOCKS 服务器和端口")
+			return routingConfig{}, errors.New("默认出口或应用规则使用了“系统侧 SOCKS”，请先填写 SOCKS 服务器和端口")
 		}
 	}
 	return config, nil
+}
+
+func isRoutingAction(action string) bool {
+	switch action {
+	case routingActionModuleDirect, routingActionSystemDirect, routingActionSystemSOCKS:
+		return true
+	default:
+		return false
+	}
 }
 
 func pathIsInside(path, directory string) bool {
@@ -241,9 +267,82 @@ func resolveRoutingModuleInterface(moduleProduct string) (routingInterfaceInfo, 
 		if networkInterface.Status != "active" || strings.TrimSpace(networkInterface.IPv4) == "" {
 			return routingInterfaceInfo{}, fmt.Errorf("模块网卡 %s 尚未连接或没有 IPv4 地址", moduleDevice)
 		}
-		return routingInterfaceInfo{Name: moduleDevice, IPv4: networkInterface.IPv4}, nil
+		ipv4Gateway := discoverRoutingScopedDefaultGateway(moduleDevice, "inet")
+		if ipv4Gateway == "" {
+			return routingInterfaceInfo{}, fmt.Errorf("模块网卡 %s 没有可用的 IPv4 默认路由", moduleDevice)
+		}
+		return routingInterfaceInfo{
+			Name:        moduleDevice,
+			IPv4:        networkInterface.IPv4,
+			IPv4Gateway: ipv4Gateway,
+			IPv6:        discoverRoutingGlobalIPv6Address(moduleDevice),
+		}, nil
 	}
 	return routingInterfaceInfo{}, fmt.Errorf("没有找到模块网卡 %s", moduleDevice)
+}
+
+func discoverRoutingGlobalIPv6Address(interfaceName string) string {
+	out, err := exec.Command("ifconfig", interfaceName).Output()
+	if err != nil {
+		return ""
+	}
+	return parseRoutingGlobalIPv6Address(string(out))
+}
+
+func parseRoutingGlobalIPv6Address(output string) string {
+	temporary := ""
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || fields[0] != "inet6" {
+			continue
+		}
+		address, _, _ := strings.Cut(fields[1], "%")
+		ip := net.ParseIP(address)
+		if ip == nil || ip.To4() != nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+			continue
+		}
+		if !slices.Contains(fields[2:], "temporary") {
+			return ip.String()
+		}
+		if temporary == "" {
+			temporary = ip.String()
+		}
+	}
+	return temporary
+}
+
+func routingInterfaceHasScopedIPv6DefaultRoute(interfaceName string) bool {
+	return discoverRoutingScopedDefaultGateway(interfaceName, "inet6") != ""
+}
+
+func discoverRoutingScopedDefaultGateway(interfaceName, family string) string {
+	out, err := exec.Command("route", "-n", "get", "-"+family, "-ifscope", interfaceName, "default").Output()
+	if err != nil {
+		return ""
+	}
+	return parseRoutingScopedDefaultGateway(string(out), interfaceName)
+}
+
+func parseRoutingScopedDefaultRoute(output string, interfaceName string) bool {
+	return parseRoutingScopedDefaultGateway(output, interfaceName) != ""
+}
+
+func parseRoutingScopedDefaultGateway(output string, interfaceName string) string {
+	gateway := ""
+	foundInterface := false
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "gateway:") {
+			gateway = strings.TrimSpace(strings.TrimPrefix(line, "gateway:"))
+		}
+		if strings.HasPrefix(line, "interface:") {
+			foundInterface = strings.TrimSpace(strings.TrimPrefix(line, "interface:")) == interfaceName
+		}
+	}
+	if !foundInterface {
+		return ""
+	}
+	return gateway
 }
 
 func detectRoutingConflicts() []routingConflict {
@@ -317,10 +416,19 @@ func isBroadTUNCaptureDestination(destination string) bool {
 	return err == nil && prefix <= 8
 }
 
-func buildIndependentCoreConfig(config routingConfig, module routingInterfaceInfo) ([]byte, error) {
+func buildIndependentCoreConfig(
+	config routingConfig,
+	module routingInterfaceInfo,
+	systemInterface string,
+	systemSOCKSBypassPatterns []string,
+) ([]byte, error) {
 	config, err := normalizeRoutingConfig(config)
 	if err != nil {
 		return nil, err
+	}
+	systemInterface = strings.TrimSpace(systemInterface)
+	if systemInterface == "" || systemInterface == module.Name {
+		return nil, errors.New("系统默认网络出口不可用")
 	}
 
 	patternsByAction := map[string][]string{
@@ -332,12 +440,26 @@ func buildIndependentCoreConfig(config routingConfig, module routingInterfaceInf
 		bundlePrefix := strings.TrimSuffix(application.BundlePath, string(filepath.Separator)) + string(filepath.Separator)
 		patternsByAction[application.Action] = append(patternsByAction[application.Action], "^"+regexp.QuoteMeta(bundlePrefix))
 	}
+	if routingConfigNeedsLoopbackSOCKSBypass(config) && len(systemSOCKSBypassPatterns) == 0 {
+		return nil, errors.New("本机 SOCKS5 作为当前出口时缺少进程旁路")
+	}
+	for _, pattern := range systemSOCKSBypassPatterns {
+		if pattern == "" || len(pattern) > 4096 || strings.ContainsAny(pattern, "\r\n\x00") {
+			return nil, errors.New("本机 SOCKS5 进程旁路无效")
+		}
+		if _, err := regexp.Compile(pattern); err != nil {
+			return nil, fmt.Errorf("本机 SOCKS5 进程旁路无效：%w", err)
+		}
+		if !slices.Contains(patternsByAction[routingActionSystemDirect], pattern) {
+			patternsByAction[routingActionSystemDirect] = append(patternsByAction[routingActionSystemDirect], pattern)
+		}
+	}
 
 	outbounds := []map[string]any{
-		{"type": "direct", "tag": "system-direct"},
-		{"type": "direct", "tag": "module-direct", "bind_interface": module.Name},
+		{"type": "direct", "tag": "system-direct", "bind_interface": systemInterface},
+		buildModuleDirectOutbound(module),
 	}
-	if len(patternsByAction[routingActionSystemSOCKS]) > 0 {
+	if len(patternsByAction[routingActionSystemSOCKS]) > 0 || config.DefaultAction == routingActionSystemSOCKS {
 		socksOutbound := map[string]any{
 			"type":        "socks",
 			"tag":         "system-socks",
@@ -347,6 +469,8 @@ func buildIndependentCoreConfig(config routingConfig, module routingInterfaceInf
 		}
 		if isLoopbackSOCKSServer(config.SystemSOCKS.Server) {
 			socksOutbound["bind_interface"] = "lo0"
+		} else {
+			socksOutbound["bind_interface"] = systemInterface
 		}
 		if config.SystemSOCKS.Username != "" {
 			socksOutbound["username"] = config.SystemSOCKS.Username
@@ -355,14 +479,13 @@ func buildIndependentCoreConfig(config routingConfig, module routingInterfaceInf
 		outbounds = append(outbounds, socksOutbound)
 	}
 
-	rules := make([]map[string]any, 0, 3)
+	rules := make([]map[string]any, 0, 4)
 	for _, route := range []struct {
 		action   string
 		outbound string
 	}{
-		{routingActionModuleDirect, "module-direct"},
-		{routingActionSystemSOCKS, "system-socks"},
 		{routingActionSystemDirect, "system-direct"},
+		{routingActionSystemSOCKS, "system-socks"},
 	} {
 		patterns := patternsByAction[route.action]
 		if len(patterns) == 0 {
@@ -376,6 +499,31 @@ func buildIndependentCoreConfig(config routingConfig, module routingInterfaceInf
 		})
 	}
 
+	modulePatterns := patternsByAction[routingActionModuleDirect]
+	usesModuleDNS := config.DefaultAction == routingActionModuleDirect || len(modulePatterns) > 0
+	if usesModuleDNS {
+		if net.ParseIP(module.IPv4Gateway).To4() == nil {
+			return nil, errors.New("模块网卡 IPv4 网关不可用，无法建立独立 DNS 出口")
+		}
+		dnsRule := map[string]any{
+			"inbound": []string{"tun-in"},
+			"port":    53,
+			"action":  "hijack-dns",
+		}
+		if config.DefaultAction != routingActionModuleDirect {
+			dnsRule["process_path_regex"] = modulePatterns
+		}
+		rules = append(rules, dnsRule)
+	}
+	if len(modulePatterns) > 0 {
+		rules = append(rules, map[string]any{
+			"inbound":            []string{"tun-in"},
+			"process_path_regex": modulePatterns,
+			"action":             "route",
+			"outbound":           "module-direct",
+		})
+	}
+
 	coreConfig := map[string]any{
 		"log": map[string]any{"level": "info", "timestamp": true},
 		"inbounds": []map[string]any{{
@@ -385,20 +533,163 @@ func buildIndependentCoreConfig(config routingConfig, module routingInterfaceInf
 			"mtu":          1500,
 			"auto_route":   true,
 			"strict_route": true,
-			"stack":        "mixed",
+			"stack":        "gvisor",
 			"route_exclude_address": []string{
 				"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-				"169.254.0.0/16", "224.0.0.0/4", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8",
+				"169.254.0.0/16", "198.18.0.0/15", "224.0.0.0/4",
+				"::1/128", "fc00::/7", "fe80::/10", "ff00::/8",
 			},
 		}},
 		"outbounds": outbounds,
 		"route": map[string]any{
+			"find_process":          len(rules) > 0,
 			"auto_detect_interface": true,
 			"rules":                 rules,
-			"final":                 "system-direct",
+			"final":                 routingOutboundTag(config.DefaultAction),
 		},
 	}
+	if usesModuleDNS {
+		coreConfig["dns"] = map[string]any{
+			"servers": []map[string]any{{
+				"type":   "udp",
+				"tag":    "module-dns",
+				"server": module.IPv4Gateway,
+				"detour": "module-direct",
+			}},
+			"final": "module-dns",
+		}
+	}
 	return json.MarshalIndent(coreConfig, "", "  ")
+}
+
+func routingOutboundTag(action string) string {
+	switch action {
+	case routingActionModuleDirect:
+		return "module-direct"
+	case routingActionSystemSOCKS:
+		return "system-socks"
+	default:
+		return "system-direct"
+	}
+}
+
+func buildModuleDirectOutbound(module routingInterfaceInfo) map[string]any {
+	outbound := map[string]any{
+		"type":               "direct",
+		"tag":                "module-direct",
+		"bind_interface":     module.Name,
+		"inet4_bind_address": module.IPv4,
+	}
+	if module.IPv6 != "" {
+		outbound["inet6_bind_address"] = module.IPv6
+	}
+	return outbound
+}
+
+func routingConfigNeedsLoopbackSOCKSBypass(config routingConfig) bool {
+	if config.Mode != routingModeIndependent || !isLoopbackSOCKSServer(config.SystemSOCKS.Server) {
+		return false
+	}
+	if config.DefaultAction == routingActionSystemSOCKS {
+		return true
+	}
+	if config.DefaultAction == routingActionSystemDirect {
+		return false
+	}
+	for _, application := range config.Applications {
+		if application.Action == routingActionSystemSOCKS {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveLoopbackSOCKSBypassPatterns(port int) ([]string, error) {
+	out, err := exec.Command(
+		"/usr/sbin/lsof",
+		"-nP",
+		"-a",
+		fmt.Sprintf("-iTCP:%d", port),
+		"-sTCP:LISTEN",
+		"-Fp",
+	).CombinedOutput()
+	pids := parseLSOFProcessIDs(string(out))
+	if err != nil || len(pids) == 0 {
+		return nil, fmt.Errorf("本机 SOCKS5 端口 127.0.0.1:%d 尚未监听", port)
+	}
+	patterns := make([]string, 0, len(pids))
+	for _, pid := range pids {
+		processPath, pathError := darwinProcessPath(pid)
+		if pathError != nil {
+			return nil, fmt.Errorf("无法识别本机 SOCKS5 进程（PID %d）：%w", pid, pathError)
+		}
+		pattern := routingProcessPathPattern(processPath)
+		if !slices.Contains(patterns, pattern) {
+			patterns = append(patterns, pattern)
+		}
+	}
+	sort.Strings(patterns)
+	return patterns, nil
+}
+
+func parseLSOFProcessIDs(output string) []int {
+	seen := make(map[int]struct{})
+	var pids []int
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) < 2 || line[0] != 'p' {
+			continue
+		}
+		pid, err := strconv.Atoi(line[1:])
+		if err != nil || pid <= 1 {
+			continue
+		}
+		if _, exists := seen[pid]; exists {
+			continue
+		}
+		seen[pid] = struct{}{}
+		pids = append(pids, pid)
+	}
+	sort.Ints(pids)
+	return pids
+}
+
+func darwinProcessPath(pid int) (string, error) {
+	const (
+		procPIDPathInfo     = 0xb
+		procPIDPathInfoSize = 4096
+		procCallNumberPID   = 0x2
+	)
+	buffer := make([]byte, procPIDPathInfoSize)
+	_, _, errno := syscall.Syscall6(
+		syscall.SYS_PROC_INFO,
+		procCallNumberPID,
+		uintptr(pid),
+		procPIDPathInfo,
+		0,
+		uintptr(unsafe.Pointer(&buffer[0])),
+		procPIDPathInfoSize,
+	)
+	if errno != 0 {
+		return "", errno
+	}
+	if end := bytes.IndexByte(buffer, 0); end >= 0 {
+		buffer = buffer[:end]
+	}
+	path := strings.TrimSpace(string(buffer))
+	if !filepath.IsAbs(path) {
+		return "", errors.New("进程路径不可用")
+	}
+	return filepath.Clean(path), nil
+}
+
+func routingProcessPathPattern(processPath string) string {
+	processPath = filepath.Clean(processPath)
+	lowerPath := strings.ToLower(processPath)
+	if appIndex := strings.Index(lowerPath, ".app/"); appIndex >= 0 {
+		bundlePrefix := processPath[:appIndex+len(".app")] + string(filepath.Separator)
+		return "^" + regexp.QuoteMeta(bundlePrefix)
+	}
+	return "^" + regexp.QuoteMeta(processPath) + "$"
 }
 
 func buildClashManagedCoreConfig(config routingConfig, module routingInterfaceInfo) ([]byte, error) {
@@ -414,12 +705,8 @@ func buildClashManagedCoreConfig(config routingConfig, module routingInterfaceIn
 			"listen":      "127.0.0.1",
 			"listen_port": config.ClashListenPort,
 		}},
-		"outbounds": []map[string]any{{
-			"type":           "direct",
-			"tag":            "module-direct",
-			"bind_interface": module.Name,
-		}},
-		"route": map[string]any{"final": "module-direct"},
+		"outbounds": []map[string]any{buildModuleDirectOutbound(module)},
+		"route":     map[string]any{"final": "module-direct"},
 	}
 	return json.MarshalIndent(coreConfig, "", "  ")
 }

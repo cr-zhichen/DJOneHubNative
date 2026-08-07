@@ -26,6 +26,7 @@ final class RoutingStore: ObservableObject {
     @Published private(set) var loadPhase: LoadPhase = .idle
     @Published private(set) var isSaving = false
     @Published private(set) var isSwitching = false
+    @Published private(set) var isUninstalling = false
     @Published private(set) var isChecking = false
     @Published private(set) var isDirty = false
     @Published private(set) var pendingEnabled: Bool?
@@ -52,7 +53,7 @@ final class RoutingStore: ObservableObject {
     }
 
     var isConfigurationLocked: Bool {
-        runtime.enabled || isSwitching || isSaving
+        runtime.enabled || isSwitching || isUninstalling || isSaving
     }
 
     var toggleIsOn: Bool {
@@ -60,7 +61,8 @@ final class RoutingStore: ObservableObject {
     }
 
     var usesSystemSOCKS: Bool {
-        config.applications.contains { $0.action == .systemSOCKS }
+        config.defaultAction == .systemSOCKS
+            || config.applications.contains { $0.action == .systemSOCKS }
     }
 
     var hasCurrentPreflight: Bool {
@@ -72,6 +74,7 @@ final class RoutingStore: ObservableObject {
             && !isDirty
             && !isSaving
             && !isSwitching
+            && !isUninstalling
             && capabilities?.coreAvailable == true
             && hasCurrentPreflight
             && preflight?.ready == true
@@ -160,7 +163,7 @@ final class RoutingStore: ObservableObject {
     }
 
     func setEnabled(_ enabled: Bool) {
-        guard isLoaded, !isSwitching, runtime.enabled != enabled else { return }
+        guard isLoaded, !isSwitching, !isUninstalling, runtime.enabled != enabled else { return }
         if enabled, !canEnable {
             errorMessage = enableBlockReason ?? "当前配置尚未通过可用性检测。"
             return
@@ -184,6 +187,28 @@ final class RoutingStore: ObservableObject {
                     let snapshot: RoutingSnapshot = try await APIClient().send("api/routing/stop")
                     apply(snapshot, includeConfig: false)
                 }
+                await checkPreflight()
+            } catch {
+                errorMessage = error.localizedDescription
+                await refreshRuntime()
+                await checkPreflight()
+            }
+        }
+    }
+
+    func uninstallService() {
+        guard isLoaded,
+              capabilities?.serviceInstalled == true,
+              !isSwitching,
+              !isUninstalling else { return }
+        isUninstalling = true
+        errorMessage = nil
+        Task {
+            defer { isUninstalling = false }
+            do {
+                let snapshot: RoutingSnapshot = try await APIClient(timeoutInterval: 210).send(
+                    "api/routing/uninstall")
+                apply(snapshot, includeConfig: false)
                 await checkPreflight()
             } catch {
                 errorMessage = error.localizedDescription

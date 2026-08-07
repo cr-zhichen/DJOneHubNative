@@ -2,9 +2,12 @@
 set -eu
 
 SING_BOX_VERSION="1.13.16"
+SING_BOX_BUILD_VERSION="1.13.16-djonehub.1"
 SING_BOX_COMMIT="17ec3c71af8ca946dc50bf0d927c39fc77322aec"
 SING_BOX_TAGS="with_gvisor"
 MINIMUM_MACOS="13.0"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+PATCH_FILE="${SCRIPT_DIR}/patches/sing-box-1.13.16-djonehub.patch"
 
 if [ "$#" -lt 3 ]; then
   echo "usage: build-network-core.sh OUTPUT_DIR CACHE_DIR ARCH [ARCH ...]" >&2
@@ -32,6 +35,18 @@ if [ "${ACTUAL_COMMIT}" != "${SING_BOX_COMMIT}" ]; then
   exit 1
 fi
 
+[ -f "${PATCH_FILE}" ] || { echo "错误：缺少 sing-box DJOneHub 补丁" >&2; exit 1; }
+if git -C "${SOURCE_DIR}" apply --unidiff-zero --reverse --check "${PATCH_FILE}" >/dev/null 2>&1; then
+  :
+else
+  git -C "${SOURCE_DIR}" apply --unidiff-zero --check "${PATCH_FILE}" || {
+    echo "错误：无法应用 sing-box DJOneHub 补丁，请清理 Xcode DerivedData 后重试。" >&2
+    exit 1
+  }
+  git -C "${SOURCE_DIR}" apply --unidiff-zero "${PATCH_FILE}"
+fi
+PATCH_SHA=$(shasum -a 256 "${PATCH_FILE}" | awk '{print $1}')
+
 build_core() {
   APPLE_ARCH="$1"
   case "${APPLE_ARCH}" in
@@ -51,12 +66,14 @@ build_core() {
 
   ARCH_DIR="${BUILD_DIR}/${APPLE_ARCH}"
   CORE_BINARY="${ARCH_DIR}/sing-box"
+  PATCH_STAMP="${ARCH_DIR}/djonehub-patch.sha256"
   mkdir -p "${ARCH_DIR}"
 
   if [ -n "${OVERRIDE_BINARY}" ]; then
     [ -f "${OVERRIDE_BINARY}" ] || { echo "错误：网络核心不存在：${OVERRIDE_BINARY}" >&2; exit 1; }
     cp "${OVERRIDE_BINARY}" "${CORE_BINARY}"
-  elif [ ! -x "${CORE_BINARY}" ] || [ "${DJONEHUB_REBUILD_NETWORK_CORE:-0}" = "1" ]; then
+  elif [ ! -x "${CORE_BINARY}" ] || [ "${DJONEHUB_REBUILD_NETWORK_CORE:-0}" = "1" ] || \
+    [ "$(cat "${PATCH_STAMP}" 2>/dev/null || true)" != "${PATCH_SHA}" ]; then
     CGO_ENABLED=1 \
     GOOS=darwin \
     GOARCH="${GO_ARCH}" \
@@ -64,8 +81,9 @@ build_core() {
     CGO_CFLAGS="${CGO_CFLAGS:-} -mmacosx-version-min=${MINIMUM_MACOS}" \
     CGO_LDFLAGS="${CGO_LDFLAGS:-} -mmacosx-version-min=${MINIMUM_MACOS}" \
       go -C "${SOURCE_DIR}" build -trimpath -tags "${SING_BOX_TAGS}" \
-        -ldflags="-X github.com/sagernet/sing-box/constant.Version=${SING_BOX_VERSION} -s -w" \
+        -ldflags="-X github.com/sagernet/sing-box/constant.Version=${SING_BOX_BUILD_VERSION} -s -w" \
         -o "${CORE_BINARY}" ./cmd/sing-box
+    printf '%s\n' "${PATCH_SHA}" > "${PATCH_STAMP}"
   fi
 
   chmod 755 "${CORE_BINARY}"

@@ -207,16 +207,9 @@ type networkCheckResult struct {
 func main() {
 	var port string
 	var listen string
-	routingSupervisor := registerRoutingSupervisorFlags()
 	flag.StringVar(&port, "port", "", "AT serial port; auto-detected when omitted")
 	flag.StringVar(&listen, "listen", "unix:/tmp/djonehub.sock", "HTTP listen address (unix:/path or host:port)")
 	flag.Parse()
-	if routingSupervisor.Enabled {
-		if err := runRoutingSupervisor(*routingSupervisor); err != nil {
-			log.Fatalf("routing supervisor: %v", err)
-		}
-		return
-	}
 
 	if strings.TrimSpace(port) == "" {
 		var err error
@@ -762,6 +755,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/routing/preflight", a.routingPreflight)
 	mux.HandleFunc("POST /api/routing/start", a.startRouting)
 	mux.HandleFunc("POST /api/routing/stop", a.stopRouting)
+	mux.HandleFunc("POST /api/routing/uninstall", a.uninstallRoutingService)
 	mux.HandleFunc("GET /api/call/status", a.callStatus)
 	mux.HandleFunc("GET /api/calls", a.listCalls)
 	mux.HandleFunc("POST /api/calls/clear", a.clearCalls)

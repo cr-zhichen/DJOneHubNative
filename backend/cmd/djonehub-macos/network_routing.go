@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -30,9 +29,11 @@ type routingRuntime struct {
 }
 
 type routingCapabilities struct {
-	CoreAvailable bool   `json:"core_available"`
-	CoreVersion   string `json:"core_version,omitempty"`
-	CorePath      string `json:"core_path,omitempty"`
+	CoreAvailable    bool   `json:"core_available"`
+	CoreVersion      string `json:"core_version,omitempty"`
+	CorePath         string `json:"core_path,omitempty"`
+	ServiceInstalled bool   `json:"service_installed"`
+	ServiceCurrent   bool   `json:"service_current"`
 }
 
 type routingSnapshot struct {
@@ -48,9 +49,8 @@ type routingManager struct {
 	configPath      string
 	coreConfigPath  string
 	coreLogPath     string
-	controlSocket   string
 	corePath        string
-	backendPath     string
+	helperPath      string
 	userHome        string
 	config          routingConfig
 	runtime         routingRuntime
@@ -70,14 +70,14 @@ func (e *routingOperationError) Error() string { return e.Message }
 func newRoutingManager(dataDir string) *routingManager {
 	backendPath, _ := os.Executable()
 	corePath := filepath.Join(filepath.Dir(backendPath), "sing-box")
+	helperPath := filepath.Join(filepath.Dir(backendPath), "djonehub-routing-helper")
 	manager := &routingManager{
 		dataDir:        dataDir,
 		configPath:     filepath.Join(dataDir, "network-routing.json"),
 		coreConfigPath: filepath.Join(dataDir, "network-core.json"),
 		coreLogPath:    filepath.Join(dataDir, "network-core.log"),
-		controlSocket:  filepath.Join(dataDir, "network-routing-control.sock"),
 		corePath:       corePath,
-		backendPath:    backendPath,
+		helperPath:     helperPath,
 		userHome:       os.Getenv("HOME"),
 		config:         loadRoutingConfig(filepath.Join(dataDir, "network-routing.json")),
 		runtime: routingRuntime{
@@ -111,13 +111,19 @@ func (m *routingManager) Snapshot() routingSnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return routingSnapshot{
-		Config:  cloneRoutingConfig(m.config),
-		Runtime: m.runtime,
-		Capabilities: routingCapabilities{
-			CoreAvailable: m.coreIsAvailable(),
-			CoreVersion:   m.coreVersion,
-			CorePath:      m.corePath,
-		},
+		Config:       cloneRoutingConfig(m.config),
+		Runtime:      m.runtime,
+		Capabilities: m.capabilitiesSnapshot(),
+	}
+}
+
+func (m *routingManager) capabilitiesSnapshot() routingCapabilities {
+	return routingCapabilities{
+		CoreAvailable:    m.coreIsAvailable(),
+		CoreVersion:      m.coreVersion,
+		CorePath:         m.corePath,
+		ServiceInstalled: m.routingServiceInstalled() || routingServiceArtifactsPresent(),
+		ServiceCurrent:   m.routingServiceCurrent(),
 	}
 }
 
@@ -136,13 +142,9 @@ func (m *routingManager) UpdateConfig(config routingConfig) (routingSnapshot, er
 	}
 	m.config = normalized
 	return routingSnapshot{
-		Config:  cloneRoutingConfig(m.config),
-		Runtime: m.runtime,
-		Capabilities: routingCapabilities{
-			CoreAvailable: m.coreIsAvailable(),
-			CoreVersion:   m.coreVersion,
-			CorePath:      m.corePath,
-		},
+		Config:       cloneRoutingConfig(m.config),
+		Runtime:      m.runtime,
+		Capabilities: m.capabilitiesSnapshot(),
 	}, nil
 }
 
@@ -184,6 +186,11 @@ func (m *routingManager) preflightConfig(config routingConfig, moduleProduct str
 		result.Issues = append(result.Issues, err.Error())
 	} else {
 		result.ModuleInterface = &module
+		if module.IPv6 == "" {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("模块网卡 %s 未获得全局 IPv6 地址；IPv4 可用，但 4G IPv6 暂不可用", module.Name))
+		} else if !routingInterfaceHasScopedIPv6DefaultRoute(module.Name) {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("模块网卡 %s 已获得 IPv6 地址，但没有可用的 IPv6 默认路由", module.Name))
+		}
 	}
 
 	if config.Mode == routingModeIndependent {
@@ -197,8 +204,13 @@ func (m *routingManager) preflightConfig(config routingConfig, moduleProduct str
 		if !running {
 			result.Conflicts = detectRoutingConflicts()
 		}
-		if len(config.Applications) == 0 {
-			result.Warnings = append(result.Warnings, "尚未添加应用规则；启用后所有应用仍会走系统默认网络")
+		if normalizeError == nil && routingConfigNeedsLoopbackSOCKSBypass(config) {
+			patterns, bypassError := resolveLoopbackSOCKSBypassPatterns(config.SystemSOCKS.Port)
+			if bypassError != nil {
+				result.Issues = append(result.Issues, bypassError.Error())
+			} else {
+				result.SystemSOCKSBypassPatterns = patterns
+			}
 		}
 	} else if !running {
 		address := net.JoinHostPort("127.0.0.1", strconv.Itoa(config.ClashListenPort))
@@ -244,7 +256,12 @@ func (m *routingManager) Start(ctx context.Context, moduleProduct string) (routi
 	var coreConfig []byte
 	var err error
 	if config.Mode == routingModeIndependent {
-		coreConfig, err = buildIndependentCoreConfig(config, *preflight.ModuleInterface)
+		coreConfig, err = buildIndependentCoreConfig(
+			config,
+			*preflight.ModuleInterface,
+			preflight.SystemInterface,
+			preflight.SystemSOCKSBypassPatterns,
+		)
 	} else {
 		coreConfig, err = buildClashManagedCoreConfig(config, *preflight.ModuleInterface)
 	}
@@ -257,6 +274,11 @@ func (m *routingManager) Start(ctx context.Context, moduleProduct string) (routi
 	if err := m.checkCoreConfig(ctx); err != nil {
 		return fail(http.StatusBadRequest, err)
 	}
+	if config.Mode == routingModeIndependent {
+		if err := m.checkRoutingServiceConfig(ctx); err != nil {
+			return fail(http.StatusBadRequest, err)
+		}
+	}
 
 	m.mu.Lock()
 	if m.generation == generation {
@@ -267,6 +289,11 @@ func (m *routingManager) Start(ctx context.Context, moduleProduct string) (routi
 	m.mu.Unlock()
 
 	if config.Mode == routingModeIndependent {
+		m.mu.Lock()
+		if m.generation == generation && !m.routingServiceInstalled() {
+			m.runtime.Message = "正在安装 TUN 服务…"
+		}
+		m.mu.Unlock()
 		err = m.startPrivilegedCore(ctx, generation)
 	} else {
 		err = m.startUserCore(generation, config.ClashListenPort)
@@ -320,6 +347,21 @@ func (m *routingManager) checkCoreConfig(ctx context.Context) error {
 		return errors.New("网络核心配置无效：" + detail)
 	}
 	return nil
+}
+
+func (m *routingManager) checkRoutingServiceConfig(ctx context.Context) error {
+	checkContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(checkContext, m.helperPath, "-check-config", m.coreConfigPath)
+	out, err := command.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		detail = err.Error()
+	}
+	return errors.New("TUN 权限服务不接受当前配置：" + detail)
 }
 
 func (m *routingManager) startUserCore(generation uint64, port int) error {
@@ -409,38 +451,11 @@ func (m *routingManager) stopUserCore(command *exec.Cmd, done <-chan struct{}) {
 }
 
 func (m *routingManager) startPrivilegedCore(ctx context.Context, generation uint64) error {
-	arguments := []string{
-		m.backendPath,
-		"-routing-supervisor",
-		"-routing-parent-pid", strconv.Itoa(os.Getpid()),
-		"-routing-core", m.corePath,
-		"-routing-config", m.coreConfigPath,
-		"-routing-control", m.controlSocket,
-		"-routing-log", m.coreLogPath,
-		"-routing-user-uid", strconv.Itoa(os.Getuid()),
-		"-routing-user-gid", strconv.Itoa(os.Getgid()),
-		"-routing-user-home", m.userHome,
+	if err := m.ensureRoutingService(ctx); err != nil {
+		return err
 	}
-	quoted := make([]string, 0, len(arguments))
-	for _, argument := range arguments {
-		quoted = append(quoted, shellQuote(argument))
-	}
-	commandText := "nohup " + strings.Join(quoted, " ") + " >/dev/null 2>&1 &"
-	encoded := base64.StdEncoding.EncodeToString([]byte(commandText))
-	script := fmt.Sprintf("do shell script \"echo %s | base64 -d | sh\" with administrator privileges", encoded)
-
-	authorizationContext, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	defer cancel()
-	out, err := exec.CommandContext(authorizationContext, "osascript", "-e", script).CombinedOutput()
-	if err != nil {
-		detail := strings.TrimSpace(string(out))
-		if detail == "" {
-			detail = err.Error()
-		}
-		if strings.Contains(strings.ToLower(detail), "user canceled") || strings.Contains(detail, "-128") {
-			return errors.New("已取消管理员授权，独立分流未启动")
-		}
-		return errors.New("管理员网络核心启动失败：" + detail)
+	if _, err := sendRoutingServiceCommand(routingServiceSocketPath, "START "+strconv.Itoa(os.Getpid())); err != nil {
+		return fmt.Errorf("启动 TUN 服务失败：%w", err)
 	}
 
 	deadline := time.Now().Add(10 * time.Second)
@@ -452,21 +467,32 @@ func (m *routingManager) startPrivilegedCore(ctx context.Context, generation uin
 		if !valid {
 			return errors.New("分流启动操作已经失效")
 		}
-		if _, err := sendRoutingSupervisorCommand(m.controlSocket, "STATUS"); err == nil {
+		if status, err := m.queryRoutingService(); err == nil && status.State == "running" {
 			time.Sleep(500 * time.Millisecond)
-			if _, secondError := sendRoutingSupervisorCommand(m.controlSocket, "STATUS"); secondError == nil {
+			if secondStatus, secondError := m.queryRoutingService(); secondError == nil && secondStatus.State == "running" {
 				return nil
 			} else {
-				lastError = secondError
+				if secondError != nil {
+					lastError = secondError
+				} else {
+					lastError = fmt.Errorf("TUN 服务状态为 %s", secondStatus.State)
+				}
 			}
 		} else {
-			lastError = err
+			if err != nil {
+				lastError = err
+			} else {
+				lastError = fmt.Errorf("TUN 服务状态为 %s", status.State)
+			}
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
-	detail := m.readCoreLogTail()
+	detail := readCoreLogTail(routingServiceLogPath)
 	if detail != "" {
 		return errors.New("独立分流核心启动失败：" + detail)
+	}
+	if lastError == nil {
+		lastError = errors.New("TUN 服务未报告运行状态")
 	}
 	return fmt.Errorf("独立分流核心启动超时：%w", lastError)
 }
@@ -482,7 +508,7 @@ func (m *routingManager) monitorPrivilegedCore(generation uint64) {
 		if !active {
 			return
 		}
-		if _, err := sendRoutingSupervisorCommand(m.controlSocket, "STATUS"); err == nil {
+		if status, err := m.queryRoutingService(); err == nil && status.State == "running" {
 			failures = 0
 			continue
 		}
@@ -495,7 +521,7 @@ func (m *routingManager) monitorPrivilegedCore(generation uint64) {
 			m.runtime.Enabled = false
 			m.runtime.State = "failed"
 			m.runtime.Message = "独立分流核心意外停止"
-			if detail := m.readCoreLogTail(); detail != "" {
+			if detail := readCoreLogTail(routingServiceLogPath); detail != "" {
 				m.runtime.Message = detail
 			}
 			m.runtime.StartedAt = nil
@@ -520,19 +546,26 @@ func (m *routingManager) Stop() (routingSnapshot, error) {
 
 	var stopError error
 	if mode == routingModeIndependent {
-		_, stopError = sendRoutingSupervisorCommand(m.controlSocket, "STOP")
+		stopped := false
+		_, stopError = sendRoutingServiceCommand(routingServiceSocketPath, "STOP")
 		if stopError != nil {
-			if _, statusError := os.Stat(m.controlSocket); os.IsNotExist(statusError) {
+			if _, statusError := os.Stat(routingServiceSocketPath); os.IsNotExist(statusError) {
 				stopError = nil
+				stopped = true
 			}
 		}
-		if stopError == nil {
+		if stopError == nil && !stopped {
 			deadline := time.Now().Add(6 * time.Second)
 			for time.Now().Before(deadline) {
-				if _, err := sendRoutingSupervisorCommand(m.controlSocket, "STATUS"); err != nil {
+				status, err := m.queryRoutingService()
+				if err == nil && status.State == "stopped" {
+					stopped = true
 					break
 				}
 				time.Sleep(100 * time.Millisecond)
+			}
+			if !stopped {
+				stopError = errors.New("TUN 网络核心未能在限定时间内停止")
 			}
 		}
 	} else if command != nil && done != nil {
@@ -548,7 +581,7 @@ func (m *routingManager) Stop() (routingSnapshot, error) {
 		return routingSnapshot{
 			Config:       cloneRoutingConfig(m.config),
 			Runtime:      m.runtime,
-			Capabilities: routingCapabilities{CoreAvailable: m.coreIsAvailable(), CoreVersion: m.coreVersion, CorePath: m.corePath},
+			Capabilities: m.capabilitiesSnapshot(),
 		}, stopError
 	}
 	m.runtime = routingRuntime{State: "stopped"}
@@ -557,8 +590,31 @@ func (m *routingManager) Stop() (routingSnapshot, error) {
 	return routingSnapshot{
 		Config:       cloneRoutingConfig(m.config),
 		Runtime:      m.runtime,
-		Capabilities: routingCapabilities{CoreAvailable: m.coreIsAvailable(), CoreVersion: m.coreVersion, CorePath: m.corePath},
+		Capabilities: m.capabilitiesSnapshot(),
 	}, nil
+}
+
+func (m *routingManager) Uninstall(ctx context.Context) (routingSnapshot, error) {
+	m.mu.Lock()
+	runningIndependent := m.runtime.Enabled && m.runtime.Mode == routingModeIndependent
+	runningUserCore := m.userCommand != nil
+	m.mu.Unlock()
+	if runningIndependent {
+		_, _ = m.Stop()
+	}
+	if err := m.uninstallRoutingService(ctx); err != nil {
+		return m.Snapshot(), err
+	}
+	if !runningUserCore {
+		_ = os.Remove(m.coreConfigPath)
+		_ = os.Remove(m.coreLogPath)
+	}
+	m.mu.Lock()
+	if m.runtime.Mode == routingModeIndependent {
+		m.runtime = routingRuntime{State: "stopped"}
+	}
+	m.mu.Unlock()
+	return m.Snapshot(), nil
 }
 
 func (m *routingManager) Close() {
@@ -566,7 +622,11 @@ func (m *routingManager) Close() {
 }
 
 func (m *routingManager) readCoreLogTail() string {
-	data, err := os.ReadFile(m.coreLogPath)
+	return readCoreLogTail(m.coreLogPath)
+}
+
+func readCoreLogTail(path string) string {
+	data, err := os.ReadFile(path)
 	if err != nil || len(data) == 0 {
 		return ""
 	}
@@ -580,7 +640,7 @@ func (m *routingManager) readCoreLogTail() string {
 	return strings.Join(lines, "\n")
 }
 
-func sendRoutingSupervisorCommand(socketPath, command string) (string, error) {
+func sendRoutingServiceCommand(socketPath, command string) (string, error) {
 	connection, err := net.DialTimeout("unix", socketPath, time.Second)
 	if err != nil {
 		return "", err
@@ -668,6 +728,21 @@ func (a *app) stopRouting(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	snapshot, err := a.routing.Stop()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (a *app) uninstallRoutingService(w http.ResponseWriter, r *http.Request) {
+	if a.routing == nil {
+		writeError(w, http.StatusServiceUnavailable, "应用分流服务尚未初始化")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute+15*time.Second)
+	defer cancel()
+	snapshot, err := a.routing.Uninstall(ctx)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

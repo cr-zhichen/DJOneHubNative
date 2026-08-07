@@ -21,6 +21,8 @@ enum RoutingAction: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    static let defaultExitCases: [RoutingAction] = [.systemDirect, .moduleDirect, .systemSOCKS]
+
     var title: String {
         switch self {
         case .moduleDirect: return "4G 直连"
@@ -71,19 +73,22 @@ struct RoutingSOCKSConfig: Codable, Equatable {
 struct RoutingConfig: Codable, Equatable {
     var version: Int
     var mode: RoutingMode
+    var defaultAction: RoutingAction
     var applications: [RoutingApplication]
     var systemSOCKS: RoutingSOCKSConfig
     var clashListenPort: Int
 
     enum CodingKeys: String, CodingKey {
         case version, mode, applications
+        case defaultAction = "default_action"
         case systemSOCKS = "system_socks"
         case clashListenPort = "clash_listen_port"
     }
 
     static let initial = RoutingConfig(
-        version: 1,
+        version: 2,
         mode: .independent,
+        defaultAction: .systemDirect,
         applications: [],
         systemSOCKS: RoutingSOCKSConfig(),
         clashListenPort: 17890)
@@ -92,6 +97,7 @@ struct RoutingConfig: Codable, Equatable {
 struct RoutingInterfaceInfo: Codable, Equatable {
     let name: String
     let ipv4: String
+    let ipv6: String?
 }
 
 struct RoutingRuntime: Decodable, Equatable {
@@ -127,11 +133,15 @@ struct RoutingCapabilities: Decodable, Equatable {
     let coreAvailable: Bool
     let coreVersion: String?
     let corePath: String?
+    let serviceInstalled: Bool
+    let serviceCurrent: Bool
 
     enum CodingKeys: String, CodingKey {
         case coreAvailable = "core_available"
         case coreVersion = "core_version"
         case corePath = "core_path"
+        case serviceInstalled = "service_installed"
+        case serviceCurrent = "service_current"
     }
 }
 

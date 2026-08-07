@@ -27,6 +27,7 @@ targets:
   DJOneHubNative:
     type: application
     platform: macOS
+    productName: DJOneHub
     sources:
       - path: app/Sources
       - path: app/Resources/Icons
@@ -75,6 +76,9 @@ targets:
             mkdir -p "${TARGET_TEMP_DIR}/backend/${a}"
             GOARCH="$(goarch "$a")" go build -trimpath -ldflags="-s -w" \
               -o "${TARGET_TEMP_DIR}/backend/${a}/djonehubd" ./cmd/djonehub-macos
+            GOARCH="$(goarch "$a")" go build -trimpath \
+              -ldflags="-linkmode external -extldflags=-mmacosx-version-min=13.0 -s -w" \
+              -o "${TARGET_TEMP_DIR}/backend/${a}/djonehub-routing-helper" ./cmd/djonehub-routing-helper
           done
 
           # 合并到 app 资源目录
@@ -89,6 +93,15 @@ targets:
             rm -f "${BACKEND_DIR}"/djonehubd.*
           else
             mv "${BACKEND_DIR}/djonehubd.${ARCHS}" "${BACKEND_DIR}/djonehubd"
+          fi
+          for a in ${ARCHS}; do
+            cp "${TARGET_TEMP_DIR}/backend/${a}/djonehub-routing-helper" "${BACKEND_DIR}/djonehub-routing-helper.${a}"
+          done
+          if [ "$(echo ${ARCHS} | wc -w)" -gt 1 ]; then
+            lipo -create "${BACKEND_DIR}"/djonehub-routing-helper.* -output "${BACKEND_DIR}/djonehub-routing-helper"
+            rm -f "${BACKEND_DIR}"/djonehub-routing-helper.*
+          else
+            mv "${BACKEND_DIR}/djonehub-routing-helper.${ARCHS}" "${BACKEND_DIR}/djonehub-routing-helper"
           fi
 
           # libusb：按架构拷贝（universal 时优先用胖文件，否则 lipo 合并）并改为 @loader_path 引用
@@ -131,3 +144,18 @@ targets:
           # 独立进程网络核心：固定源码提交构建，保持与主后端许可证边界分离。
           "${PROJECT_DIR}/scripts/build-network-core.sh" \
             "${BACKEND_DIR}" "${TARGET_TEMP_DIR}/network-core" ${ARCHS}
+
+          # 所有嵌套 Mach-O 在 lipo/install_name_tool 完成后统一进行 ad-hoc 签名。
+          for code in \
+            "${BACKEND_DIR}/libusb-1.0.0.dylib" \
+            "${BACKEND_DIR}/djonehubd" \
+            "${BACKEND_DIR}/djonehub-routing-helper" \
+            "${BACKEND_DIR}/sing-box"; do
+            /usr/bin/codesign --force --sign - --timestamp=none "$code"
+          done
+
+          # 增量构建时 Xcode 可能跳过外层签名；重新封装资源签名，首次构建仍会由 Xcode 最终签名覆盖。
+          APP_BUNDLE="${TARGET_BUILD_DIR}/${WRAPPER_NAME}"
+          if [ -d "${APP_BUNDLE}" ]; then
+            /usr/bin/codesign --force --sign - --timestamp=none "${APP_BUNDLE}"
+          fi

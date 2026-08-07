@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct TrafficRoutingView: View {
     @StateObject private var store = RoutingStore()
     @State private var copiedClashConfig = false
+    @State private var showingUninstallConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -46,6 +47,18 @@ struct TrafficRoutingView: View {
         } message: {
             Text(store.errorMessage ?? "未知错误")
         }
+        .confirmationDialog(
+            "卸载 TUN 权限服务？",
+            isPresented: $showingUninstallConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("卸载服务", role: .destructive) {
+                store.uninstallService()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(uninstallConfirmationMessage)
+        }
     }
 
     private var header: some View {
@@ -53,7 +66,7 @@ struct TrafficRoutingView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("应用分流")
                     .font(.title2.bold())
-                Text("指定应用走 4G，或把 4G 出口交给 Clash 管理。功能默认关闭。")
+                Text("选择默认出口、指定应用走 4G，或把 4G 出口交给 Clash 管理。功能默认关闭。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -84,14 +97,22 @@ struct TrafficRoutingView: View {
     }
 
     private var toggleDisabled: Bool {
-        store.isSwitching || store.isSaving || (!store.runtime.enabled && !store.canEnable)
+        store.isSwitching || store.isUninstalling || store.isSaving
+            || (!store.runtime.enabled && !store.canEnable)
     }
 
     private var toggleHint: String {
         if let reason = store.enableBlockReason { return reason }
-        return store.config.mode == .independent
-            ? "启用独立分流时需要管理员授权"
-            : "启用本地 4G SOCKS5 出口"
+        if store.config.mode == .independent {
+            if store.capabilities?.serviceCurrent == true {
+                return "启用已安装的 TUN 权限服务"
+            }
+            if store.capabilities?.serviceInstalled == true {
+                return "启用时需要管理员授权并更新 TUN 权限服务"
+            }
+            return "首次启用时需要管理员授权并安装 TUN 权限服务"
+        }
+        return "启用本地 4G SOCKS5 出口"
     }
 
     private var loadingState: some View {
@@ -133,7 +154,7 @@ struct TrafficRoutingView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 360)
+                .frame(maxWidth: 360, alignment: .leading)
                 .disabled(store.isConfigurationLocked)
 
                 Spacer()
@@ -152,6 +173,11 @@ struct TrafficRoutingView: View {
             Divider()
 
             readinessRows
+
+            if shouldShowRoutingServiceControl {
+                Divider()
+                routingServiceControl
+            }
 
             if let preflight = store.preflight {
                 ForEach(preflight.issues, id: \.self) { issue in
@@ -196,6 +222,72 @@ struct TrafficRoutingView: View {
         .routingPanel()
     }
 
+    private var shouldShowRoutingServiceControl: Bool {
+        store.config.mode == .independent || store.capabilities?.serviceInstalled == true
+    }
+
+    private var routingServiceControl: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "lock.shield")
+                .foregroundStyle(routingServiceColor)
+                .frame(width: 18)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("TUN 权限服务")
+                    .font(.callout.bold())
+                Text(routingServiceDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 16)
+
+            if store.capabilities?.serviceInstalled == true {
+                if store.isUninstalling {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("正在卸载 TUN 权限服务")
+                }
+                Button("卸载…", role: .destructive) {
+                    showingUninstallConfirmation = true
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(store.isUninstalling || store.isSwitching || store.isSaving)
+                .accessibilityHint("移除特权服务；下次开启独立分流时需要重新授权")
+            } else {
+                Text("未安装")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var routingServiceDescription: String {
+        if store.capabilities?.serviceCurrent == true {
+            return "已安装。关闭分流只停止 TUN；卸载后下次开启需要重新授权。"
+        }
+        if store.capabilities?.serviceInstalled == true {
+            return "需要更新。下次开启独立分流时会请求管理员授权并更新服务。"
+        }
+        return "首次开启独立分流时自动安装，并请求管理员授权。"
+    }
+
+    private var routingServiceColor: Color {
+        if store.capabilities?.serviceCurrent == true { return .green }
+        if store.capabilities?.serviceInstalled == true { return .orange }
+        return .secondary
+    }
+
+    private var uninstallConfirmationMessage: String {
+        if store.runtime.enabled && store.runtime.mode == .independent {
+            return "需要管理员授权。当前独立分流会先停止，然后移除特权服务和网络核心副本。分流配置会保留。"
+        }
+        return "需要管理员授权。将移除特权服务和网络核心副本。分流配置会保留，下次开启时需要重新授权。"
+    }
+
     @ViewBuilder
     private var readinessRows: some View {
         let module = store.preflight?.moduleInterface ?? store.runtime.moduleInterface
@@ -203,7 +295,7 @@ struct TrafficRoutingView: View {
         VStack(spacing: 8) {
             readinessRow(
                 title: "4G 模块",
-                value: module.map { "\($0.name) · \($0.ipv4)" } ?? "未检测到",
+                value: module.map(routingModuleDescription) ?? "未检测到",
                 icon: "antenna.radiowaves.left.and.right",
                 color: module == nil ? .red : .green)
 
@@ -231,11 +323,36 @@ struct TrafficRoutingView: View {
 
     private var independentConfiguration: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("默认出口")
+                        .font(.headline)
+                    Text("没有单独规则的应用使用此出口。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 16)
+
+                Picker("默认出口", selection: $store.config.defaultAction) {
+                    ForEach(RoutingAction.defaultExitCases) { action in
+                        Label(action.title, systemImage: action.icon).tag(action)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 165)
+                .disabled(store.isConfigurationLocked)
+                .accessibilityHint("未设置单独规则的应用将使用这个出口")
+            }
+
+            Divider().padding(.vertical, 2)
+
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("应用出口规则")
                         .font(.headline)
-                    Text("未添加的应用默认走系统网络；4G 直连不会经过任何 SOCKS。")
+                    Text("已添加的应用会覆盖默认出口；4G 直连不会经过任何 SOCKS。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -351,7 +468,7 @@ struct TrafficRoutingView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("系统侧 SOCKS5")
                     .font(.callout.bold())
-                Text("只用于标记为“系统侧 SOCKS”的应用；到 SOCKS 服务的连接由系统网络处理。")
+                Text("可作为默认出口，也可用于单独标记的应用；到 SOCKS 服务的连接由系统网络处理。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -370,6 +487,16 @@ struct TrafficRoutingView: View {
                     .frame(minWidth: 130)
             }
             .disabled(store.isConfigurationLocked)
+
+            if store.config.defaultAction == .systemSOCKS {
+                Label(
+                    "使用本机 SOCKS 时会自动绕过 TUN；端口未监听或无法识别进程时不会启动。",
+                    systemImage: "arrow.uturn.backward.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -381,7 +508,7 @@ struct TrafficRoutingView: View {
                 .accessibilityHidden(true)
             Text("尚未添加应用")
                 .font(.callout.bold())
-            Text("所有应用当前都会使用系统默认网络。")
+            Text("所有应用当前使用默认出口：\(store.config.defaultAction.title)。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Button("选择应用…") { chooseApplications() }
@@ -462,6 +589,13 @@ struct TrafficRoutingView: View {
         .font(.callout)
     }
 
+    private func routingModuleDescription(_ module: RoutingInterfaceInfo) -> String {
+        guard let ipv6 = module.ipv6, !ipv6.isEmpty else {
+            return "\(module.name) · IPv4 \(module.ipv4) · IPv6 未分配"
+        }
+        return "\(module.name) · IPv4 \(module.ipv4) · IPv6 \(ipv6)"
+    }
+
     private func noticeRow(_ message: String, color: Color, icon: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: icon)
@@ -491,6 +625,7 @@ struct TrafficRoutingView: View {
     }
 
     private var runtimeText: String {
+        if store.isUninstalling { return "正在卸载服务" }
         if store.isSwitching {
             return store.pendingEnabled == false ? "正在停用" : "正在启用"
         }
@@ -504,6 +639,7 @@ struct TrafficRoutingView: View {
     }
 
     private var runtimeColor: Color {
+        if store.isUninstalling { return .orange }
         if store.isSwitching { return .orange }
         switch store.runtime.state {
         case "running": return .green
