@@ -160,8 +160,10 @@ struct ConversationRow: View {
                     .lineLimit(1)
                 if let last = conversation.lastMessage {
                     HStack(spacing: 6) {
-                        Text(last.isOutgoing ? "我：" : "")
-                            .foregroundStyle(.secondary)
+                        if last.isOutgoing {
+                            Text("我：")
+                                .foregroundStyle(.secondary)
+                        }
                         Text(last.content ?? "")
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
