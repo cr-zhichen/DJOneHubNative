@@ -1726,22 +1726,42 @@ func (a *app) networkTraffic(w http.ResponseWriter, _ *http.Request) {
 		SampledAtMS: time.Now().UnixMilli(),
 	}
 
+	moduleProduct := ""
+	if usbDevice := a.currentUSBDevice(); usbDevice != nil {
+		moduleProduct = strings.TrimSpace(usbDevice.Product)
+	}
+	if moduleProduct == "" {
+		snapshot.Error = "未识别到 4G 模块"
+		writeJSON(w, http.StatusOK, snapshot)
+		return
+	}
+	services, err := macNetworkServiceOrder(moduleProduct)
+	if err != nil {
+		snapshot.Error = err.Error()
+		writeJSON(w, http.StatusOK, snapshot)
+		return
+	}
 	interfaces := discoverMacNetworkInterfaces()
-	name := selectUSBTrafficInterface(interfaces, discoverMacDefaultRoute())
+	name, active := selectModuleTrafficInterface(interfaces, services)
 	if name == "" {
+		snapshot.Error = "未识别到 4G 模块网卡"
+		writeJSON(w, http.StatusOK, snapshot)
+		return
+	}
+	snapshot.Interface = name
+	if !active {
+		snapshot.Error = "4G 模块网卡未连接"
 		writeJSON(w, http.StatusOK, snapshot)
 		return
 	}
 	counters, err := discoverMacInterfaceCounters()
 	if err != nil {
-		snapshot.Interface = name
 		snapshot.Error = err.Error()
 		writeJSON(w, http.StatusOK, snapshot)
 		return
 	}
 	current, ok := counters[name]
 	if !ok {
-		snapshot.Interface = name
 		snapshot.Error = "未读取到网卡计数"
 		writeJSON(w, http.StatusOK, snapshot)
 		return
@@ -2283,11 +2303,15 @@ func macNetworkServiceOrder(moduleProduct string) ([]networkService, error) {
 	if err != nil {
 		return nil, fmt.Errorf("networksetup: %v", err)
 	}
+	return parseMacNetworkServiceOrder(string(out), moduleProduct), nil
+}
+
+func parseMacNetworkServiceOrder(out, moduleProduct string) []networkService {
 	nameRe := regexp.MustCompile(`^\(\d+\)\s*(.+)$`)
 	portRe := regexp.MustCompile(`Hardware Port:\s*([^,]+)`)
 	deviceRe := regexp.MustCompile(`Device:\s*([^,\)]+)`)
 	var services []networkService
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if m := nameRe.FindStringSubmatch(line); m != nil {
 			name := strings.TrimSpace(strings.TrimPrefix(m[1], "*"))
@@ -2309,7 +2333,7 @@ func macNetworkServiceOrder(moduleProduct string) ([]networkService, error) {
 			last.Module = true
 		}
 	}
-	return services, nil
+	return services
 }
 
 // GET /api/network/services：列出网络服务顺序
@@ -2576,18 +2600,24 @@ func hasLikelyUSBNetworkInterface(interfaces []macNetInterface) bool {
 	return false
 }
 
-func selectUSBTrafficInterface(interfaces []macNetInterface, route macDefaultRoute) string {
-	for _, item := range interfaces {
-		if item.Name == route.Interface && item.Kind == "ethernet" && item.Name != "en0" && item.Status == "active" {
-			return item.Name
+// selectModuleTrafficInterface 只返回已被标记为 4G 模块的网卡。
+// 服务顺序和默认路由不参与选择，避免把扩展坞等其他 USB 网卡计入 4G 流量。
+func selectModuleTrafficInterface(interfaces []macNetInterface, services []networkService) (string, bool) {
+	detected := ""
+	for _, service := range services {
+		if !service.Module || service.Device == "" {
+			continue
+		}
+		if detected == "" {
+			detected = service.Device
+		}
+		for _, item := range interfaces {
+			if item.Name == service.Device && item.Kind == "ethernet" && item.Status == "active" {
+				return service.Device, true
+			}
 		}
 	}
-	for _, item := range interfaces {
-		if item.Kind == "ethernet" && item.Name != "en0" && item.Status == "active" {
-			return item.Name
-		}
-	}
-	return ""
+	return detected, false
 }
 
 func discoverMacInterfaceCounters() (map[string]networkByteCounters, error) {
