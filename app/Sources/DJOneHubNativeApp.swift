@@ -289,6 +289,15 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
             }
             .store(in: &statusCancellables)
 
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak store] _ in
+                Task { @MainActor [weak store] in
+                    store?.recoverNetworkAfterWake()
+                }
+            }
+            .store(in: &statusCancellables)
+
         NotificationCenter.default.publisher(
             for: MenuBarDisplayOptions.didChangeNotification)
             .receive(on: RunLoop.main)
