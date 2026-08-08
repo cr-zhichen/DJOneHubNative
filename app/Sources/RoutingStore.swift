@@ -13,6 +13,9 @@ final class RoutingStore: ObservableObject {
 
     @Published var config: RoutingConfig = .initial {
         didSet {
+            if oldValue.systemSOCKS != config.systemSOCKS {
+                invalidateSystemSOCKSCheck()
+            }
             guard !isApplyingSnapshot, oldValue != config else { return }
             isDirty = true
             configRevision &+= 1
@@ -28,6 +31,8 @@ final class RoutingStore: ObservableObject {
     @Published private(set) var isSwitching = false
     @Published private(set) var isUninstalling = false
     @Published private(set) var isChecking = false
+    @Published private(set) var isCheckingSystemSOCKS = false
+    @Published private(set) var systemSOCKSCheckResult: RoutingSOCKSCheckResult?
     @Published private(set) var isDirty = false
     @Published private(set) var pendingEnabled: Bool?
     @Published var errorMessage: String?
@@ -36,12 +41,15 @@ final class RoutingStore: ObservableObject {
     private var configRevision = 0
     private var preflightRevision: Int?
     private var preflightGeneration = 0
+    private var systemSOCKSCheckGeneration = 0
     private var pollTask: Task<Void, Never>?
     private var preflightDebounceTask: Task<Void, Never>?
+    private var systemSOCKSCheckTask: Task<Void, Never>?
 
     deinit {
         pollTask?.cancel()
         preflightDebounceTask?.cancel()
+        systemSOCKSCheckTask?.cancel()
     }
 
     var isLoaded: Bool {
@@ -63,6 +71,14 @@ final class RoutingStore: ObservableObject {
     var usesSystemSOCKS: Bool {
         config.defaultAction == .systemSOCKS
             || config.applications.contains { $0.action == .systemSOCKS }
+    }
+
+    var canCheckSystemSOCKS: Bool {
+        isLoaded
+            && !isCheckingSystemSOCKS
+            && !isSaving
+            && !isSwitching
+            && !isUninstalling
     }
 
     var hasCurrentPreflight: Bool {
@@ -224,6 +240,40 @@ final class RoutingStore: ObservableObject {
         await performPreflight()
     }
 
+    func checkSystemSOCKS() {
+        guard canCheckSystemSOCKS else { return }
+        let checkedConfig = config.systemSOCKS
+        systemSOCKSCheckTask?.cancel()
+        systemSOCKSCheckGeneration &+= 1
+        let generation = systemSOCKSCheckGeneration
+        systemSOCKSCheckResult = nil
+        isCheckingSystemSOCKS = true
+
+        systemSOCKSCheckTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if generation == self.systemSOCKSCheckGeneration {
+                    self.isCheckingSystemSOCKS = false
+                    self.systemSOCKSCheckTask = nil
+                }
+            }
+            do {
+                let result: RoutingSOCKSCheckResult = try await APIClient(timeoutInterval: 5).send(
+                    "api/routing/check-system-socks", body: checkedConfig)
+                guard generation == systemSOCKSCheckGeneration,
+                      checkedConfig == config.systemSOCKS else { return }
+                systemSOCKSCheckResult = result
+            } catch {
+                guard !Task.isCancelled,
+                      generation == systemSOCKSCheckGeneration,
+                      checkedConfig == config.systemSOCKS else { return }
+                systemSOCKSCheckResult = RoutingSOCKSCheckResult(
+                    available: false,
+                    message: "无法完成检测：\(error.localizedDescription)")
+            }
+        }
+    }
+
     func addApplication(url: URL) {
         let canonicalURL = url.resolvingSymlinksInPath()
         guard let bundle = Bundle(url: canonicalURL), let executableURL = bundle.executableURL else {
@@ -309,6 +359,14 @@ final class RoutingStore: ObservableObject {
         preflightRevision = nil
         preflightGeneration &+= 1
         isChecking = false
+    }
+
+    private func invalidateSystemSOCKSCheck() {
+        systemSOCKSCheckGeneration &+= 1
+        systemSOCKSCheckTask?.cancel()
+        systemSOCKSCheckTask = nil
+        systemSOCKSCheckResult = nil
+        isCheckingSystemSOCKS = false
     }
 
     private func apply(_ snapshot: RoutingSnapshot, includeConfig: Bool) {

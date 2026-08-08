@@ -379,10 +379,8 @@ struct TrafficRoutingView: View {
                 }
             }
 
-            if store.usesSystemSOCKS {
-                Divider().padding(.vertical, 2)
-                systemSOCKSFields
-            }
+            Divider().padding(.vertical, 2)
+            systemSOCKSFields
 
             Divider().padding(.vertical, 2)
             HStack(alignment: .top, spacing: 10) {
@@ -465,30 +463,54 @@ struct TrafficRoutingView: View {
 
     private var systemSOCKSFields: some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("系统侧 SOCKS5")
-                    .font(.callout.bold())
-                Text("可作为默认出口，也可用于单独标记的应用；到 SOCKS 服务的连接由系统网络处理。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("系统侧 SOCKS5")
+                        .font(.callout.bold())
+                    Text("可提前配置和检测；仅在默认出口或应用规则选择它时使用。到 SOCKS 服务的连接由系统网络处理。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                Button {
+                    store.checkSystemSOCKS()
+                } label: {
+                    Label(
+                        store.isCheckingSystemSOCKS ? "检测中…" : "检测",
+                        systemImage: "wave.3.right.circle"
+                    )
+                }
+                .controlSize(.small)
+                .disabled(!store.canCheckSystemSOCKS)
+                .accessibilityHint("验证当前服务器的 TCP 连接、SOCKS5 握手与认证")
             }
+
             HStack(spacing: 10) {
                 TextField("服务器", text: $store.config.systemSOCKS.server)
                     .textFieldStyle(.roundedBorder)
                     .frame(minWidth: 170)
+                    .accessibilityLabel("SOCKS5 服务器")
                 TextField("端口", value: $store.config.systemSOCKS.port, format: .number.grouping(.never))
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 90)
+                    .accessibilityLabel("SOCKS5 端口")
                 TextField("用户名（可选）", text: $store.config.systemSOCKS.username)
                     .textFieldStyle(.roundedBorder)
                     .frame(minWidth: 130)
+                    .accessibilityLabel("SOCKS5 用户名，可选")
                 SecureField("密码（可选）", text: $store.config.systemSOCKS.password)
                     .textFieldStyle(.roundedBorder)
                     .frame(minWidth: 130)
+                    .accessibilityLabel("SOCKS5 密码，可选")
             }
             .disabled(store.isConfigurationLocked)
 
-            if store.config.defaultAction == .systemSOCKS {
+            systemSOCKSCheckStatus
+
+            if store.usesSystemSOCKS {
                 Label(
                     "使用本机 SOCKS 时会自动绕过 TUN；端口未监听或无法识别进程时不会启动。",
                     systemImage: "arrow.uturn.backward.circle"
@@ -498,6 +520,37 @@ struct TrafficRoutingView: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    @ViewBuilder
+    private var systemSOCKSCheckStatus: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if store.isCheckingSystemSOCKS {
+                ProgressView()
+                    .controlSize(.mini)
+                    .accessibilityHidden(true)
+                Text("正在连接并验证 SOCKS5 握手…")
+            } else if let result = store.systemSOCKSCheckResult {
+                Image(systemName: result.available ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundStyle(result.available ? .green : .red)
+                    .accessibilityHidden(true)
+                Text(systemSOCKSCheckDescription(result))
+            } else {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text("检测只验证监听、SOCKS5 握手与可选认证，不访问外部站点。")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func systemSOCKSCheckDescription(_ result: RoutingSOCKSCheckResult) -> String {
+        guard result.available, let latency = result.latencyMS else { return result.message }
+        return "\(result.message) · \(latency) ms"
     }
 
     private var emptyApplications: some View {
