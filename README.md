@@ -17,18 +17,22 @@
 
 ## 简介
 
-DJOneHub（大疆第一代 4G 模块管理工具）的原生 macOS 重制版：SwiftUI 原生窗口界面 + Go 后端子进程，通过 Unix domain socket 通信，支持短信收发、eSIM Profile 管理、网络诊断与 AT 调试。
+DJOneHub 是大疆第一代 4G 模块管理工具的原生 macOS 重制版。SwiftUI 前端与 Go 后端通过 Unix domain socket 通信，在一个应用中完成模块状态查看、短信与 eSIM 管理、网络分流、来电提醒和调试诊断。
 
-由 [ZenGeekLabs/DJOneHub](https://github.com/ZenGeekLabs/DJOneHub)（源自 [iniwex5/vohive](https://github.com/iniwex5/vohive)）改造而来：Web 套壳界面替换为原生 SwiftUI，后端 Go 逻辑保留自上游。
+项目由 [ZenGeekLabs/DJOneHub](https://github.com/ZenGeekLabs/DJOneHub)（源自 [iniwex5/vohive](https://github.com/iniwex5/vohive)）改造而来，保留上游 Go 核心逻辑，并以原生 SwiftUI 界面替代 Web 套壳。
 
-## 功能特性
+## 功能
 
-- 首页总览：模块状态、设备信息、实时流量、网卡优先级、短信保存与语音通话状态
-- 短信收发：会话列表 / 新短信系统通知 / 验证码标记 / 模块旧短信清理
-- eSIM Profile 管理：卡片信息 / Profile 列表 / 下载 / 启用 / 改名 / 删除 / 号码资料
-- 网络与流量：实时流量 / 网卡模式切换 / 4G 出口与代理检查 / 模块重启
-- 应用分流：独立分流（应用级 4G 直连 / 系统直连 / 系统侧 SOCKS）与 Clash 代管（本地 4G SOCKS5 出口）
-- 调试与诊断：网络诊断详情 / AT 指令调试 / 通知调试（分页组织）
+| 模块 | 功能 |
+| --- | --- |
+| 首页与网络 | 模块、SIM、信号和设备信息；本次与累计流量；USB 网卡开关、网络服务排序、4G 默认出口检查和模块重启 |
+| 短信 | 会话收发与回复、单条删除、验证码标记；SIM / 模块存储扫描与选择性清理；短信接管、本机归档和系统通知 |
+| eSIM | 实体 SIM / eUICC 识别、卡片与 Profile 信息；Profile 下载、启用、改名和删除；号码资料与模块通讯录检测 |
+| 语音与来电 | 语音状态开关、自定义来电卡片、铃声选择与试听、通话状态与挂断、通话记录管理 |
+| 应用分流 | 独立分流支持默认及分应用选择 4G 直连、系统直连或系统 SOCKS5；包含 SOCKS5 握手与认证检测、运行预检、TUN 冲突检测和权限服务管理 |
+| Clash 代管 | 提供本地 4G SOCKS5 出口，可配置监听端口并复制 Clash 配置 |
+| 应用与菜单栏 | 开机自启、静默启动、关闭窗口后后台运行；菜单栏可显示信号强度与实时上下行速率，并可打开主界面或退出应用 |
+| 调试与更新 | 网络诊断、AT 指令、通知模拟和窗口兼容模式；正式版 / 测试版渠道、手动或自动更新检查及版本跳过 |
 
 ## 界面预览
 
@@ -38,99 +42,58 @@ DJOneHub（大疆第一代 4G 模块管理工具）的原生 macOS 重制版：S
 
 ## 接入准备
 
-**硬件**
-
 - 大疆第一代 4G 模块
-- 可正常使用的实体 SIM，或与当前实现兼容的实体 eUICC/eSIM 卡片
+- 可正常使用的实体 SIM，或与当前实现兼容的实体 eUICC / eSIM 卡片
 - 支持数据传输的 USB-C 线缆
-- Apple Silicon 或 Intel Mac
+- Apple Silicon 或 Intel Mac，macOS 13.0 及以上
 
-模块的 USB 设备标识通常为 `2ca3:4006`。连接后若 macOS 完全识别不到 USB 设备，请优先确认线缆支持数据传输。
+模块的 USB 设备标识通常为 `2ca3:4006`。连接后若 macOS 完全识别不到设备，请先确认线缆支持数据传输。
 
-**指示灯**
-
-| 状态 | 常见含义 |
+| 指示灯 | 常见含义 |
 | --- | --- |
 | 红色常亮 | 未插入 SIM 卡 |
 | 红色闪烁 | SIM 卡未被正常识别 |
 | 绿色常亮 | SIM 已识别，蜂窝信号通常较好 |
 | 绿色闪烁 | SIM 已识别，蜂窝信号可能较弱或仍在注册 |
 
+## 安装与运行
+
+从 [GitHub Releases](https://github.com/cr-zhichen/DJOneHubNative/releases) 下载适合当前架构的 DMG，将 App 拖入“应用程序”文件夹即可。发行版采用 ad-hoc 签名且未公证；若首次启动提示“无法验证开发者”，请先尝试打开一次，再前往“系统设置 → 隐私与安全性”点击“仍要打开”。
+
+应用启动时会自动启动后端服务；关闭主窗口后仍在菜单栏运行，通过“退出 DJOneHub”才会停止服务。应用分流默认关闭，独立分流首次启用或更新权限服务时需要管理员授权。
+
+日志位于 `~/Library/Application Support/DJOneHubNative/djonehub.log`。
+
 ## 构建
 
 ```sh
-mise install                # 按 mise.toml 安装固定版本的 Go（1.26.3）
-mise run build              # 构建 .app（本机架构）
-mise run build:universal    # 构建通用包（arm64 + x86_64）
-mise run build:arm64 / build:x86_64
+mise install                # 安装 mise.toml 固定的 Go 版本
+mise run build              # 构建当前架构的 .app
+mise run build:universal    # 构建 arm64 + x86_64 通用包
 mise run launch             # 启动已构建的 app
+mise run backend:test       # 运行后端测试
 mise run clean              # 清理 build/ 与 dist/
-mise run backend:test / backend:vet / backend:tidy
 ```
 
-需要：`mise`、Xcode（26 或更新）、`pkg-config`、`libusb`（brew）、`git` 与首次构建时可访问 GitHub 的网络。构建脚本会从固定提交编译独立的 sing-box 网络核心；发行版同时提供 universal / arm64 / x86_64 三种 DMG。
+需要 `mise`、Xcode 26 或更新版本、`pkg-config`、`libusb`、`git`，以及首次构建时可访问 GitHub 的网络。构建脚本会从固定提交编译独立的 sing-box 网络核心；发行版提供 universal、arm64 和 x86_64 三种 DMG。
 
-## 开发与测试环境
+## 验证范围
 
-本软件目前的全部开发与测试均在 macOS 26 下完成。项目的最低部署目标仍为 macOS 13，但 macOS 13–25 尚未在真实设备上完成同等范围的验证。
+项目目前主要在 macOS 26.5.2、Apple M5 Pro、Xcode 26.6 和 Go 1.26.3 环境下开发与测试。最低部署目标为 macOS 13，但 macOS 13–25 尚未完成同等范围的真实设备验证。
 
-当前主要开发设备：
-
-| 项目 | 信息 |
-| --- | --- |
-| 设备 | MacBook Pro（Mac17,9） |
-| 芯片 | Apple M5 Pro（15 核） |
-| 内存 | 24 GB |
-| 架构 | arm64 |
-| 系统 | macOS 26.5.2（25F84） |
-| Xcode | 26.6（17F113） |
-| Go | 1.26.3（darwin/arm64） |
-
-## 运行
-
-```sh
-open dist/DJOneHub-arm64.app
-```
-
-- 首页可选择开启/关闭后端服务，服务随 app 退出而停止
-- 日志：`~/Library/Application Support/DJOneHubNative/djonehub.log`
-
-### 首次启动（发行版）
-
-发行版为 ad-hoc 签名（无公证），从 GitHub Releases 下载 **DMG**，双击挂载后将 App 拖入"应用程序"文件夹。首次启动时 macOS 可能提示"无法验证开发者"。如遇提示：
-
-1. 尝试打开一次应用
-2. 打开"系统设置"
-3. 进入"隐私与安全性"
-4. 点击"仍要打开"
-
-之后即可正常使用。从源码本地构建（见上方"构建"）则不会触发该提示。
-
-## 状态
-
-- [x] 首页服务开关（开启 / 关闭 / 状态与错误提示）
-- [x] 短信收发页（列表 / 刷新 / 发送 / 验证码标记 / 清空模块旧短信）
-- [x] eSIM Profile 管理页（卡片信息 / Profile 列表 / 下载 / 启用 / 改名 / 删除 / 号码资料）
-- [x] 网络与流量页（实时流量 / 模式切换 / 4G 出口与代理检查 / 诊断 / 重启模块）
-- [x] AT 调试页（快捷命令 / 命令输入 / 响应历史）
-- [x] 语音通话：来电自定义通知卡片（响铃 / 挂断 / 铃声选择 / 通话记录）
-- [x] 分应用网络出口（独立分流 / Clash 代管，默认关闭）
-- [x] 软件开机自启与后台运行
-- [x] 菜单栏显示（默认仅图标，可选信号强度与实时上下行速率）
-
-API 模型与端点已通过无硬件环境自动验证（`app/Tests/APIProbe`）；完整功能需接真机验证。
+API 模型与端点已通过无硬件环境自动验证（`app/Tests/APIProbe`）；短信、eSIM 写入、蜂窝链路和独立分流等完整功能仍需对应硬件与网络环境验证。当前模块固件不支持通话音频传输，应用仅提供来电提醒、状态查看、挂断和通话记录。
 
 ## 文档
 
-- `docs/MODULE_RESEARCH.md`：大疆一代 4G 模块研究档案（硬件识别、USB ID 恢复手册、语音通话调查结论与 AT 指令清单）
-- `docs/ARCHITECTURE.md`：项目架构与开发笔记（关键设计决策、踩坑记录）
+- [`docs/MODULE_RESEARCH.md`](docs/MODULE_RESEARCH.md)：模块识别、USB ID 恢复、语音调查与 AT 指令
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：架构、关键设计决策与开发记录
 
 ## 许可证
 
-继承自上游：PolyForm Noncommercial License 1.0.0（仅限非商业用途），必须保留上游声明 `Copyright iniwex5 (https://github.com/iniwex5/vohive)`。详见 LICENSE 与 THIRD_PARTY_NOTICES.md。
+本项目继承上游的 PolyForm Noncommercial License 1.0.0，仅限非商业用途，并保留上游声明 `Copyright iniwex5 (https://github.com/iniwex5/vohive)`。详见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 社区
 
-本项目的开发契机源于 [LINUX DO](https://linux.do/) 社区。在社区中了解到大疆第一代 4G 模块后，萌生出在此基础上开展相关研究与 DJOneHub 的原生 macOS 重制工作。
+本项目的开发契机源于 [LINUX DO](https://linux.do/) 社区。在社区中了解到大疆第一代 4G 模块后，开始进行相关研究并开发 DJOneHub 的原生 macOS 版本。
 
 作者社区主页：[zgccrui](https://linux.do/u/zgccrui)
