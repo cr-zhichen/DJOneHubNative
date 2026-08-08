@@ -70,6 +70,25 @@ struct RoutingSOCKSConfig: Codable, Equatable {
     }
 }
 
+struct RoutingSOCKSCheckResult: Decodable, Equatable {
+    let available: Bool
+    let address: String?
+    let message: String
+    let latencyMS: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case available, address, message
+        case latencyMS = "latency_ms"
+    }
+
+    init(available: Bool, address: String? = nil, message: String, latencyMS: Int? = nil) {
+        self.available = available
+        self.address = address
+        self.message = message
+        self.latencyMS = latencyMS
+    }
+}
+
 struct RoutingConfig: Codable, Equatable {
     var version: Int
     var mode: RoutingMode

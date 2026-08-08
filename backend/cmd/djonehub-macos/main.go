@@ -753,6 +753,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/routing", a.getRouting)
 	mux.HandleFunc("PUT /api/routing/config", a.updateRoutingConfig)
 	mux.HandleFunc("POST /api/routing/preflight", a.routingPreflight)
+	mux.HandleFunc("POST /api/routing/check-system-socks", a.checkSystemSOCKS)
 	mux.HandleFunc("POST /api/routing/start", a.startRouting)
 	mux.HandleFunc("POST /api/routing/stop", a.stopRouting)
 	mux.HandleFunc("POST /api/routing/uninstall", a.uninstallRoutingService)

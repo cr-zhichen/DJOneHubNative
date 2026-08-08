@@ -702,6 +702,16 @@ func (a *app) routingPreflight(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, a.routing.Preflight(a.routingModuleProduct()))
 }
 
+func (a *app) checkSystemSOCKS(w http.ResponseWriter, r *http.Request) {
+	var config routingSOCKSConfig
+	if !decodeJSON(w, r, &config) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), routingSOCKSCheckTimeout)
+	defer cancel()
+	writeJSON(w, http.StatusOK, checkRoutingSOCKS(ctx, config))
+}
+
 func (a *app) startRouting(w http.ResponseWriter, r *http.Request) {
 	if a.routing == nil {
 		writeError(w, http.StatusServiceUnavailable, "应用分流服务尚未初始化")
