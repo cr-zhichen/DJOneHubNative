@@ -181,7 +181,7 @@ struct HomeView: View {
                     showingRebootConfirm = true
                 }
                 .controlSize(.small)
-                .disabled(store.busy)
+                .disabled(store.busy || store.networkRecovering)
             }
         }
         .padding(12)
@@ -219,7 +219,7 @@ struct HomeView: View {
             HStack(spacing: 10) {
                 sectionTitle("网络与流量")
                 Spacer()
-                if store.busy {
+                if store.busy && !store.networkRecovering {
                     ProgressView().controlSize(.small)
                 }
                 Button {
@@ -228,15 +228,18 @@ struct HomeView: View {
                     Text("检查 4G 出口")
                 }
                 .controlSize(.small)
-                .disabled(store.busy)
+                .disabled(store.busy || store.networkRecovering)
                 Button(store.usbnetEnabled ? "关闭网卡" : "开启网卡") {
                     store.usbnetEnabled.toggle()
                     store.switchMode()
                 }
                 .controlSize(.small)
-                .disabled(store.busy || !store.usbnetLoaded)
+                .disabled(store.busy || store.networkRecovering || !store.usbnetLoaded)
             }
             if let traffic {
+                if !traffic.available {
+                    networkRecoveryRow(traffic)
+                }
                 HStack(spacing: 16) {
                     trafficItem("本次下载", trafficMetric(traffic.sessionRX))
                     Divider().frame(height: 26)
@@ -258,6 +261,49 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+    }
+
+    private func networkRecoveryRow(_ traffic: TrafficSnapshot) -> some View {
+        HStack(spacing: 10) {
+            if store.networkRecovering {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(store.networkRecoveryMessage ?? traffic.error ?? "实时流量不可用")
+                    .font(.callout)
+                Text(store.networkRecovering
+                     ? "模块重启并重新连接通常需要 20–40 秒。"
+                     : store.canRetryNetworkConnection
+                         ? "可以尝试重新连接；恢复期间模块会短暂重启。"
+                         : "请检查模块连接和 USB 网卡状态。")
+                    .font(.caption)
+                    .foregroundStyle(Color.primary.opacity(0.7))
+            }
+
+            Spacer(minLength: 8)
+
+            if store.canRetryNetworkConnection || store.networkRecovering {
+                Button(store.networkRecovering ? "正在连接…" : "重试连接") {
+                    store.retryNetworkConnection()
+                }
+                .controlSize(.small)
+                .disabled(store.networkRecovering || store.busy || !store.callStatus.isIdle)
+                .help(store.callStatus.isIdle
+                      ? "重启 4G 模块并等待网卡恢复"
+                      : "需要在通话空闲时重试")
+                .accessibilityHint("重启 4G 模块并等待网卡恢复")
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(colorScheme == .dark ? 0.12 : 0.08)))
     }
 
     // MARK: - 网卡优先级
