@@ -302,18 +302,19 @@ func TestGetEffectiveAIDPlanUsesFullStaticWithoutKnownAIDs(t *testing.T) {
 	}
 }
 
-func TestGetEffectiveAIDPlanIgnoresSeededAIDs(t *testing.T) {
+func TestGetEffectiveAIDPlanPrioritizesSeededAIDs(t *testing.T) {
 	seeded := mustHexAIDs(t, "A0000005591010FFFFFFFF8900000101")
 	mgr := newManagerWithChannelFactory("dev-esim", nil, nil, nil, nil)
 	mgr.SeedDiscoveredEUICCs([]EUICCInfo{{AID: seeded[0], EID: "eid-1", Spec: EUICCSpecSGP22}})
 
 	plan := mgr.getEffectiveAIDPlan()
 
-	if plan.Policy != aidScanPolicyFullStatic {
-		t.Fatalf("Policy=%q want %q", plan.Policy, aidScanPolicyFullStatic)
+	if plan.Policy != aidScanPolicyKnownFirst {
+		t.Fatalf("Policy=%q want %q", plan.Policy, aidScanPolicyKnownFirst)
 	}
-	if got, want := aidHexList(plan.AIDs), aidHexList(AIDs); !reflect.DeepEqual(got, want) {
-		t.Fatalf("plan AIDs=%v want full static AIDs %v", got, want)
+	want := append(aidHexList(seeded), aidHexList(AIDs)...)
+	if got := aidHexList(plan.AIDs); !reflect.DeepEqual(got, want) {
+		t.Fatalf("plan AIDs=%v want known-first AIDs %v", got, want)
 	}
 }
 
@@ -328,18 +329,19 @@ func TestGetEffectiveAIDsClonesPlanAIDs(t *testing.T) {
 	}
 }
 
-func TestSeedDiscoveredEUICCsDoesNotChangeScanPlan(t *testing.T) {
+func TestSeedDiscoveredEUICCsChangesScanPlanToKnownFirst(t *testing.T) {
 	aid := mustHexAIDs(t, "A0000005591010FFFFFFFF8900000199")[0]
 	mgr := newManagerWithChannelFactory("dev-esim", nil, nil, nil, nil)
 
 	mgr.SeedDiscoveredEUICCs([]EUICCInfo{{AID: aid, EID: "eid-1", Spec: EUICCSpecSGP22}})
 
 	plan := mgr.getEffectiveAIDPlan()
-	if plan.Policy != aidScanPolicyFullStatic {
-		t.Fatalf("Policy=%q want %q after seeding discovered eUICC", plan.Policy, aidScanPolicyFullStatic)
+	if plan.Policy != aidScanPolicyKnownFirst {
+		t.Fatalf("Policy=%q want %q after seeding discovered eUICC", plan.Policy, aidScanPolicyKnownFirst)
 	}
-	if got, want := aidHexList(plan.AIDs), aidHexList(AIDs); !reflect.DeepEqual(got, want) {
-		t.Fatalf("plan AIDs=%v want full static AIDs %v", got, want)
+	want := append([]string{strings.ToUpper(hex.EncodeToString(aid))}, aidHexList(AIDs)...)
+	if got := aidHexList(plan.AIDs); !reflect.DeepEqual(got, want) {
+		t.Fatalf("plan AIDs=%v want known-first AIDs %v", got, want)
 	}
 }
 
@@ -414,7 +416,7 @@ func TestGetEsimOverviewSeedsDiscoveredEIDForLaterGetEIDs(t *testing.T) {
 	}
 }
 
-func TestForEachEUICCAlwaysUsesFullStaticScan(t *testing.T) {
+func TestForEachEUICCUsesKnownAIDFirstAfterDiscovery(t *testing.T) {
 	targetAID := cloneAIDList([][]byte{AIDs[3]})[0]
 	targetHex := strings.ToUpper(hex.EncodeToString(targetAID))
 	attempts := make(map[string]int)
@@ -463,8 +465,8 @@ func TestForEachEUICCAlwaysUsesFullStaticScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second forEachEUICC() error=%v, attempts=%v", err, seenAttempts)
 	}
-	if wantAttempts := aidHexList(AIDs[:4]); !reflect.DeepEqual(seenAttempts, wantAttempts) {
-		t.Fatalf("second attempted AIDs=%v want fresh full scan %v", seenAttempts, wantAttempts)
+	if wantAttempts := []string{targetHex}; !reflect.DeepEqual(seenAttempts, wantAttempts) {
+		t.Fatalf("second attempted AIDs=%v want learned AID first %v", seenAttempts, wantAttempts)
 	}
 	if callbackAID != targetHex {
 		t.Fatalf("second callback AID=%s want %s", callbackAID, targetHex)
@@ -1461,11 +1463,15 @@ func TestNotifyModemResetDelayedClearsCacheImmediatelyAndReloadsAfterDelay(t *te
 	if mgr.cachedOverview() != nil {
 		t.Fatal("overview cache should be cleared immediately")
 	}
-	if mgr.chipInfoCache != nil {
+	mgr.cacheMu.RLock()
+	chipInfoCache := mgr.chipInfoCache
+	discoveredCount := len(mgr.discoveredEUICCs)
+	mgr.cacheMu.RUnlock()
+	if chipInfoCache != nil {
 		t.Fatal("chipInfoCache should be cleared immediately")
 	}
-	if len(mgr.discoveredEUICCs) != 0 {
-		t.Fatalf("discoveredEUICCs = %v, want cleared", mgr.discoveredEUICCs)
+	if discoveredCount != 0 {
+		t.Fatalf("discoveredEUICCs count = %d, want cleared", discoveredCount)
 	}
 	select {
 	case <-loaded:

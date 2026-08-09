@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"runtime/debug"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,53 +57,6 @@ var aidOrderRank = func() map[string]int {
 // isESTKmeAID 判断 AID 是否属于 eSTK.me 系列
 func isESTKmeAID(aid []byte) bool {
 	return len(aid) >= len(estkmeAIDPrefix) && bytes.Equal(aid[:len(estkmeAIDPrefix)], estkmeAIDPrefix)
-}
-
-// predictSkuName 尝试根据 EID 前缀和固件版本预测卡片的品牌名称（如 9eSIM）
-// 参考自 OpenEUICC 源码逻辑
-func predictSkuName(eid string, firmware string) string {
-	if eid == "" || firmware == "" {
-		return ""
-	}
-
-	// 判断是否为 9eSIM 典型的 EID 前缀 (890440458467274948 / 890440452167274948等)
-	if strings.HasPrefix(eid, "890440458467274948") || strings.HasPrefix(eid, "890440452167274948") {
-		// 简单解析固件版本
-		parts := strings.Split(firmware, ".")
-		if len(parts) == 3 {
-			v1, _ := strconv.Atoi(parts[0])
-			v2, _ := strconv.Atoi(parts[1])
-			v3, _ := strconv.Atoi(parts[2])
-
-			// 粗略判断版本对应名称（简化自 OpenEUICC 的版本阈值）
-			var verName string
-			if v1 > 37 || (v1 == 37 && v2 >= 4) {
-				verName = "v3.2"
-			} else if v1 == 37 && v2 == 1 && v3 >= 41 {
-				verName = "v3.1"
-			} else if v1 == 36 && v2 >= 18 {
-				verName = "v3"
-			} else if v1 == 36 && v2 >= 17 && v3 >= 39 {
-				verName = "v3 (beta)"
-			} else if v1 == 36 && v2 == 17 && v3 >= 4 {
-				verName = "v2s"
-			} else if v1 == 36 && v2 >= 9 {
-				verName = "v2.1"
-			} else if v1 == 36 && v2 >= 7 {
-				verName = "v2"
-			} else if v1 < 36 {
-				// 兼容可能的新规则或者我们自己测试提取的 25.x 固件
-				verName = fmt.Sprintf("v%d", v1)
-			}
-
-			if verName != "" {
-				return "9eSIM " + verName
-			}
-		}
-		return "9eSIM"
-	}
-
-	return ""
 }
 
 // shouldContinueAIDScanAfterSuccess 判断在已经发现可用 AID 后是否还需要继续扫描。
@@ -162,7 +114,7 @@ func hasReusableChipProductInfo(info *EUICCChipInfo) bool {
 	if info == nil {
 		return false
 	}
-	// 仅 SkuName / SerialNumber 来自 eSTK.me Product AID 查询（或 SkuName 由 predictSkuName 推断），
+	// 仅 SkuName / SerialNumber 来自 eSTK.me Product AID 查询（或 SkuName 由身份规则推断），
 	// 可作为"已获取产品信息"的判据。
 	// Firmware 不能作为判据：当 eSTK.me Product AID 查询失败时（如逻辑通道资源耗尽），
 	// info.Firmware 会被标准 EUICCInfo2 的固件版本兜底填充。若据此判定缓存可复用，
@@ -186,6 +138,9 @@ const (
 	euiccSpecGuessSGP22Compat   = "sgp22_compatible"
 	euiccSpecConfidenceInferred = "inferred"
 	aidScanPolicyFullStatic     = aidScanPolicy("full_static")
+	aidScanPolicyKnownFirst     = aidScanPolicy("known_first")
+	profileReadStateReady       = "ready"
+	profileReadStateError       = "error"
 )
 
 type aidScanPolicy string
@@ -243,17 +198,20 @@ type ProfileItem struct {
 
 // EUICCProfiles 按 eUICC 分组的 profile 列表
 type EUICCProfiles struct {
-	EID      string        `json:"eid"`
-	AIDHex   string        `json:"aid_hex"`
-	Profiles []ProfileItem `json:"profiles"`
+	EID       string        `json:"eid"`
+	AIDHex    string        `json:"aid_hex"`
+	ReadState string        `json:"read_state"`
+	ReadError string        `json:"read_error,omitempty"`
+	Profiles  []ProfileItem `json:"profiles"`
 }
 
 // EUICCChipInfo eUICC 芯片/卡的硬件信息
 type EUICCChipInfo struct {
-	EIDs         []EUICCInfo `json:"eids"`                    // 所有 EID 列表（含各自可用空间）
-	SkuName      string      `json:"sku_name,omitempty"`      // 产品名称（如 "ESTKme Max"）
-	SerialNumber string      `json:"serial_number,omitempty"` // 序列号（如 "T3VAMD0"）
-	Firmware     string      `json:"firmware,omitempty"`      // 固件版本
+	EIDs         []EUICCInfo   `json:"eids"`                    // 所有 EID 列表（含各自可用空间）
+	SkuName      string        `json:"sku_name,omitempty"`      // 产品名称（如 "ESTKme Max"）
+	SerialNumber string        `json:"serial_number,omitempty"` // 序列号（如 "T3VAMD0"）
+	Firmware     string        `json:"firmware,omitempty"`      // 固件版本
+	Identity     *CardIdentity `json:"identity,omitempty"`      // 产品身份、证据来源与可信度
 }
 
 // eSTK.me Product AID，用于查询设备名称、序列号和固件版本
@@ -281,6 +239,7 @@ type Manager struct {
 
 	cacheMu                     sync.RWMutex   // 保护 chipInfoCache、overviewCache 与 discoveredEUICCs 等快照状态
 	opMu                        sync.Mutex     // eSIM 硬件操作互斥（同时只允许一个写操作）
+	opDoneMu                    sync.RWMutex   // 保护 opDone 的广播 channel 轮换
 	opDone                      chan struct{}  // 写操作完成通知（替代 TryLock+Sleep 轮询）
 	chipInfoCache               *EUICCChipInfo // 芯片信息缓存（硬件信息基本不变）
 	overviewCache               *EsimOverview  // eSIM 总览缓存（跟随 Manager / Worker 实例）
@@ -311,9 +270,13 @@ type Manager struct {
 	downloadCtx atomic.Pointer[context.Context]
 }
 
-// ErrOperationInProgress 表示当前有写操作（下载/切换/删除）正在进行中
-// 读操作（GetProfiles / GetEsimOverview）在检测到此情况时立即降级，不进入 SIM 卡通道
+// ErrOperationInProgress 表示当前有写操作（下载/切换/删除）正在进行中。
+// 读操作会先短暂排队，超过等待窗口后返回该错误，不再进入 SIM 卡通道。
 var ErrOperationInProgress = fmt.Errorf("eSIM 操作进行中，请稍后重试")
+
+// ErrEUICCNotFound 表示候选管理 AID 均未发现可用 eUICC。
+// 调用方仍应结合 SIM 插入状态判断它是实体 SIM 还是传输故障。
+var ErrEUICCNotFound = errors.New("未发现任何 eUICC")
 
 type ManagerOptions struct {
 	DeviceID                string
@@ -560,7 +523,36 @@ func (m *Manager) SeedDiscoveredEUICCs(infos []EUICCInfo) {
 }
 
 func (m *Manager) getEffectiveAIDPlan() aidScanPlan {
-	return aidScanPlan{Policy: aidScanPolicyFullStatic, AIDs: cloneAIDList(AIDs)}
+	if m == nil {
+		return aidScanPlan{Policy: aidScanPolicyFullStatic, AIDs: cloneAIDList(AIDs)}
+	}
+	m.cacheMu.RLock()
+	discovered := cloneEUICCInfoList(m.discoveredEUICCs)
+	m.cacheMu.RUnlock()
+
+	known := make([][]byte, 0, len(discovered))
+	seen := make(map[string]bool)
+	appendUnique := func(aid []byte) {
+		if len(aid) == 0 {
+			return
+		}
+		key := strings.ToUpper(hex.EncodeToString(aid))
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		known = append(known, append([]byte(nil), aid...))
+	}
+	for _, info := range discovered {
+		appendUnique(info.AID)
+	}
+	if len(known) == 0 {
+		return aidScanPlan{Policy: aidScanPolicyFullStatic, AIDs: cloneAIDList(AIDs)}
+	}
+	for _, aid := range AIDs {
+		appendUnique(aid)
+	}
+	return aidScanPlan{Policy: aidScanPolicyKnownFirst, AIDs: known}
 }
 
 // getEffectiveAIDs 返回应被遍历的 AID 列表
@@ -648,6 +640,9 @@ func normalizeEUICCInfo(info EUICCInfo) (EUICCInfo, bool) {
 		if info.AIDHex == "" {
 			info.AIDHex = fmt.Sprintf("%X", info.AID)
 		}
+	}
+	if len(info.Certificates) > 0 {
+		info.Certificates = append([]string(nil), info.Certificates...)
 	}
 	return info, info.AIDHex != "" || info.EID != ""
 }
@@ -807,7 +802,8 @@ func (m *Manager) logWriteOperationHold(operation string, started time.Time) {
 }
 
 // forEachEUICC 遍历所有可用的 eUICC，对每个唯一 EID 调用回调函数。
-// 每次从静态候选 AID 重新扫描；命中可用 AID 后停止，eSTK Max 的 SE0/SE1 例外。
+// 优先扫描上次成功的 AID，再回退到静态候选；命中可用 AID 后停止，
+// eSTK Max 的 SE0/SE1 例外。
 // 回调参数: client=已打开的 LPA 客户端, aid=当前 AID, eidStr=当前 EID 字符串
 func (m *Manager) forEachEUICC(fn func(client *lpa.Client, aid []byte, eidStr string) error) error {
 	// 读请求在写操作进行中采用排队等待策略，超时才返回 busy。
@@ -857,9 +853,9 @@ func (m *Manager) forEachEUICC(fn func(client *lpa.Client, aid []byte, eidStr st
 		"triedCount", len(aids),
 		"err", err)
 	if err != nil {
-		return fmt.Errorf("未发现任何 eUICC: %w", err)
+		return fmt.Errorf("%w: %v", ErrEUICCNotFound, err)
 	}
-	return fmt.Errorf("未发现任何 eUICC")
+	return ErrEUICCNotFound
 }
 
 func (m *Manager) waitForNoWriteOperation() error {
@@ -875,8 +871,15 @@ func (m *Manager) waitForNoWriteOperation() error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	for {
+		done := m.operationDoneChannel()
+		// The writer may have unlocked between the first TryLock and the channel
+		// snapshot. Re-check here so a waiter cannot miss the broadcast rotation.
+		if m.opMu.TryLock() {
+			m.opMu.Unlock()
+			return nil
+		}
 		select {
-		case <-m.opDone:
+		case <-done:
 			// 写操作已发出完成通知，尝试确认锁已释放
 			if m.opMu.TryLock() {
 				m.opMu.Unlock()
@@ -889,6 +892,13 @@ func (m *Manager) waitForNoWriteOperation() error {
 }
 
 func (m *Manager) acquireOperationLock() error {
+	return m.acquireOperationLockContext(context.Background())
+}
+
+func (m *Manager) acquireOperationLockContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if m.opMu.TryLock() {
 		return nil
 	}
@@ -899,19 +909,38 @@ func (m *Manager) acquireOperationLock() error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	for {
-		done := m.opDone
-		if done == nil {
-			done = make(chan struct{})
+		done := m.operationDoneChannel()
+		// Pair the channel snapshot with a second lock attempt. Without it, a
+		// writer that finishes just before this snapshot could leave us waiting
+		// on the next generation even though the mutex is already free.
+		if m.opMu.TryLock() {
+			return nil
 		}
 		select {
 		case <-done:
 			if m.opMu.TryLock() {
 				return nil
 			}
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-timer.C:
 			return ErrOperationInProgress
 		}
 	}
+}
+
+func (m *Manager) operationDoneChannel() <-chan struct{} {
+	if m == nil {
+		return nil
+	}
+	m.opDoneMu.RLock()
+	done := m.opDone
+	m.opDoneMu.RUnlock()
+	if done != nil {
+		return done
+	}
+	// NewManager 总会初始化 opDone；这个永不关闭的兜底仅服务于零值测试实例。
+	return make(chan struct{})
 }
 
 func (m *Manager) lockOperation(operation string) (func(), error) {
@@ -930,8 +959,10 @@ func (m *Manager) lockOperation(operation string) (func(), error) {
 // 必须在 opMu.Unlock() 之后立即调用。
 func (m *Manager) notifyWriteDone() {
 	// 关闭旧 channel（广播通知），并新建一个供下次写操作使用
+	m.opDoneMu.Lock()
 	old := m.opDone
 	m.opDone = make(chan struct{})
+	m.opDoneMu.Unlock()
 	if old != nil {
 		close(old)
 	}
@@ -1089,7 +1120,7 @@ func (m *Manager) GetEIDs() ([]EUICCInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return v.([]EUICCInfo), nil
+	return cloneEUICCInfoList(v.([]EUICCInfo)), nil
 }
 
 // GetEID 获取第一个 eUICC 的 EID（向后兼容）
@@ -1107,7 +1138,7 @@ func (m *Manager) GetEUICCChipInfo(forceRefresh bool) (*EUICCChipInfo, error) {
 	// 优先返回缓存（硬件信息不会变，只有可用空间会变）
 	if !forceRefresh {
 		m.cacheMu.RLock()
-		cached := m.chipInfoCache
+		cached := cloneChipInfo(m.chipInfoCache)
 		m.cacheMu.RUnlock()
 		if cached != nil {
 			return cached, nil
@@ -1142,12 +1173,13 @@ func (m *Manager) GetEUICCChipInfo(forceRefresh bool) (*EUICCChipInfo, error) {
 		// 通过 eSTK.me Product AID 获取硬件标识（SkuName/SerialNumber/Firmware）
 		// 优化：硬件标识不随使用变化，若已有缓存则直接复用，跳过 6 次 APDU 开销
 		m.cacheMu.RLock()
-		cachedChip := m.chipInfoCache
+		cachedChip := cloneChipInfo(m.chipInfoCache)
 		m.cacheMu.RUnlock()
 		if hasReusableChipProductInfo(cachedChip) {
 			info.SkuName = cachedChip.SkuName
 			info.SerialNumber = cachedChip.SerialNumber
 			info.Firmware = cachedChip.Firmware
+			info.Identity = cloneCardIdentity(cachedChip.Identity)
 			logger.Debug("复用 chipInfoCache 跳过 eSTK.me Product AID 查询",
 				"device", m.deviceID,
 				"cached_sku", cachedChip.SkuName)
@@ -1163,15 +1195,20 @@ func (m *Manager) GetEUICCChipInfo(forceRefresh bool) (*EUICCChipInfo, error) {
 
 		// 对没有私有接口获取 SkuName 的传统白卡（例如 9eSIM）尝试硬编码预测判定
 		if info.SkuName == "" && len(info.EIDs) > 0 {
-			if guessedName := predictSkuName(info.EIDs[0].EID, info.Firmware); guessedName != "" {
-				info.SkuName = guessedName
-				logger.Info("基于特征预测了 eSIM 品牌信息", "device", m.deviceID, "guessed_sku", info.SkuName)
+			if identity := predictCardIdentity(info.EIDs[0].EID, info.Firmware); identity != nil {
+				info.Identity = identity
+				info.SkuName = identity.Model
+				logger.Info("基于特征预测了 eSIM 品牌信息",
+					"device", m.deviceID,
+					"guessed_sku", info.SkuName,
+					"identity_rule", identity.RuleID,
+					"identity_confidence", identity.Confidence)
 			}
 		}
 
 		// 写入缓存
 		m.cacheMu.Lock()
-		m.chipInfoCache = info
+		m.chipInfoCache = cloneChipInfo(info)
 		m.cacheMu.Unlock()
 		return info, nil
 	})
@@ -1179,13 +1216,14 @@ func (m *Manager) GetEUICCChipInfo(forceRefresh bool) (*EUICCChipInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return v.(*EUICCChipInfo), nil
+	return cloneChipInfo(v.(*EUICCChipInfo)), nil
 }
 
 // EsimOverview 合并的 eSIM 总览信息（芯片信息 + 按 eUICC 分组的 profiles）
 type EsimOverview struct {
-	ChipInfo *EUICCChipInfo  `json:"chip_info"` // 芯片硬件信息
-	Profiles []EUICCProfiles `json:"profiles"`  // 按 eUICC 分组的 profile 列表
+	ChipInfo  *EUICCChipInfo  `json:"chip_info"`  // 芯片硬件信息
+	Profiles  []EUICCProfiles `json:"profiles"`   // 按 eUICC 分组的 profile 列表
+	UpdatedAt time.Time       `json:"updated_at"` // 最近一次硬件总览成功完成时间
 }
 
 // parseEUICCInfo2ForEID 从标准 eUICC 信息接口解析单个 eUICC 的可用空间、固件版本、制造商和证书信息。
@@ -1241,6 +1279,9 @@ func (m *Manager) parseESTKmeInfo(info *EUICCChipInfo) {
 
 	info.SkuName = readField(0x03)
 	info.SerialNumber = readField(0x00)
+	if info.SkuName != "" {
+		info.Identity = privateCardIdentity(info.SkuName)
+	}
 
 	bl := readField(0x01) // bootloader version
 	fw := readField(0x02) // firmware version
@@ -1280,8 +1321,10 @@ func cloneProfiles(groups []EUICCProfiles) []EUICCProfiles {
 	cloned := make([]EUICCProfiles, len(groups))
 	for i, group := range groups {
 		cloned[i] = EUICCProfiles{
-			EID:    group.EID,
-			AIDHex: group.AIDHex,
+			EID:       group.EID,
+			AIDHex:    group.AIDHex,
+			ReadState: group.ReadState,
+			ReadError: group.ReadError,
 		}
 		if len(group.Profiles) > 0 {
 			cloned[i].Profiles = append([]ProfileItem(nil), group.Profiles...)
@@ -1296,8 +1339,9 @@ func cloneChipInfo(info *EUICCChipInfo) *EUICCChipInfo {
 	}
 	cloned := *info
 	if len(info.EIDs) > 0 {
-		cloned.EIDs = append([]EUICCInfo(nil), info.EIDs...)
+		cloned.EIDs = cloneEUICCInfoList(info.EIDs)
 	}
+	cloned.Identity = cloneCardIdentity(info.Identity)
 	return &cloned
 }
 
@@ -1306,15 +1350,16 @@ func cloneOverview(overview *EsimOverview) *EsimOverview {
 		return nil
 	}
 	return &EsimOverview{
-		ChipInfo: cloneChipInfo(overview.ChipInfo),
-		Profiles: cloneProfiles(overview.Profiles),
+		ChipInfo:  cloneChipInfo(overview.ChipInfo),
+		Profiles:  cloneProfiles(overview.Profiles),
+		UpdatedAt: overview.UpdatedAt,
 	}
 }
 
 func (m *Manager) cachedOverview() *EsimOverview {
 	m.cacheMu.RLock()
 	defer m.cacheMu.RUnlock()
-	return m.overviewCache
+	return cloneOverview(m.overviewCache)
 }
 
 func (m *Manager) setOverviewCache(overview *EsimOverview, err error, generation uint64) {
@@ -1515,7 +1560,7 @@ func (m *Manager) loadOverview() (*EsimOverview, error) {
 	if err != nil {
 		return nil, err
 	}
-	return v.(*EsimOverview), nil
+	return cloneOverview(v.(*EsimOverview)), nil
 }
 
 func (m *Manager) triggerOverviewReload(reason string) {
@@ -1552,9 +1597,10 @@ func (m *Manager) WarmOverviewAsync(reason string) {
 func buildProfileGroup(eidStr string, aid []byte, profiles []*sgp22.ProfileInfo) EUICCProfiles {
 	aidHex := fmt.Sprintf("%X", aid)
 	group := EUICCProfiles{
-		EID:      eidStr,
-		AIDHex:   aidHex,
-		Profiles: make([]ProfileItem, 0, len(profiles)),
+		EID:       eidStr,
+		AIDHex:    aidHex,
+		ReadState: profileReadStateReady,
+		Profiles:  make([]ProfileItem, 0, len(profiles)),
 	}
 	for _, p := range profiles {
 		name := p.ProfileNickname
@@ -1599,9 +1645,11 @@ func (m *Manager) loadProfilesFresh() ([]EUICCProfiles, error) {
 				"EID", eidStr,
 				"err", profileErr)
 			profileGroups = append(profileGroups, EUICCProfiles{
-				EID:      eidStr,
-				AIDHex:   aidHex,
-				Profiles: []ProfileItem{},
+				EID:       eidStr,
+				AIDHex:    aidHex,
+				ReadState: profileReadStateError,
+				ReadError: "Profile 列表读取失败，请刷新后重试",
+				Profiles:  []ProfileItem{},
 			})
 			return nil
 		}
@@ -1653,9 +1701,11 @@ func (m *Manager) loadOverviewFresh() (*EsimOverview, error) {
 				"EID", eidStr,
 				"err", profileErr)
 			profileGroups = append(profileGroups, EUICCProfiles{
-				EID:      eidStr,
-				AIDHex:   aidHex,
-				Profiles: []ProfileItem{},
+				EID:       eidStr,
+				AIDHex:    aidHex,
+				ReadState: profileReadStateError,
+				ReadError: "Profile 列表读取失败，请刷新后重试",
+				Profiles:  []ProfileItem{},
 			})
 			return nil
 		}
@@ -1681,12 +1731,13 @@ func (m *Manager) loadOverviewFresh() (*EsimOverview, error) {
 	sortEUICCProfilesStable(profileGroups)
 
 	m.cacheMu.RLock()
-	cachedChip := m.chipInfoCache
+	cachedChip := cloneChipInfo(m.chipInfoCache)
 	m.cacheMu.RUnlock()
 	if hasReusableChipProductInfo(cachedChip) {
 		info.SkuName = cachedChip.SkuName
 		info.SerialNumber = cachedChip.SerialNumber
 		info.Firmware = cachedChip.Firmware
+		info.Identity = cloneCardIdentity(cachedChip.Identity)
 		logger.Debug("复用 chipInfoCache 跳过 eSTK.me Product AID 查询",
 			"device", m.deviceID,
 			"cached_sku", cachedChip.SkuName)
@@ -1697,15 +1748,21 @@ func (m *Manager) loadOverviewFresh() (*EsimOverview, error) {
 		info.Firmware = info.EIDs[0].Firmware
 	}
 	if info.SkuName == "" && len(info.EIDs) > 0 {
-		if guessedName := predictSkuName(info.EIDs[0].EID, info.Firmware); guessedName != "" {
-			info.SkuName = guessedName
-			logger.Info("基于特征预测了 eSIM 品牌信息", "device", m.deviceID, "guessed_sku", info.SkuName)
+		if identity := predictCardIdentity(info.EIDs[0].EID, info.Firmware); identity != nil {
+			info.Identity = identity
+			info.SkuName = identity.Model
+			logger.Info("基于特征预测了 eSIM 品牌信息",
+				"device", m.deviceID,
+				"guessed_sku", info.SkuName,
+				"identity_rule", identity.RuleID,
+				"identity_confidence", identity.Confidence)
 		}
 	}
 
 	return &EsimOverview{
-		ChipInfo: info,
-		Profiles: profileGroups,
+		ChipInfo:  info,
+		Profiles:  profileGroups,
+		UpdatedAt: time.Now(),
 	}, nil
 }
 
@@ -1757,6 +1814,7 @@ func (m *Manager) RefreshProfiles() error {
 		m.overviewCache = &EsimOverview{}
 	}
 	m.overviewCache.Profiles = cloneProfiles(profiles)
+	m.overviewCache.UpdatedAt = time.Now()
 	m.overviewLastErr = nil
 	return nil
 }
@@ -1813,6 +1871,25 @@ func (m *Manager) findAIDForICCID(targetICCID string) ([]byte, error) {
 			fmt.Sprintf("无效的 ICCID %q: %v", targetICCID, err),
 			err,
 		)
+	}
+
+	// 总览已经精确记录了 Profile 所属的 AID；优先使用缓存，避免每次写操作重新扫描卡片。
+	if overview := m.cachedOverview(); overview != nil {
+		for _, group := range overview.Profiles {
+			for _, profile := range group.Profiles {
+				if !isTargetICCIDActive(iccid.String(), profile.ICCID) {
+					continue
+				}
+				aid, decodeErr := hex.DecodeString(strings.TrimSpace(group.AIDHex))
+				if decodeErr == nil && len(aid) > 0 {
+					logger.Debug("从 eSIM 总览缓存命中 ICCID 所属 AID",
+						"device", m.deviceID,
+						"ICCID", targetICCID,
+						"AID", group.AIDHex)
+					return aid, nil
+				}
+			}
+		}
 	}
 
 	aids := m.getEffectiveAIDs()
@@ -2048,7 +2125,9 @@ func (m *Manager) SwitchProfile(ctx context.Context, targetICCID string, aidHex 
 func (m *Manager) SwitchProfileWithResult(ctx context.Context, targetICCID string, aidHex string) (SwitchProfileResult, error) {
 	const operation = SwitchOperationEnableProfile
 	result := SwitchProfileResult{TargetICCID: targetICCID}
-	m.opMu.Lock()
+	if err := m.acquireOperationLockContext(ctx); err != nil {
+		return result, err
+	}
 	writeStarted := time.Now()
 	switchSucceeded := false
 	switchStarted := false
@@ -2194,7 +2273,9 @@ func (m *Manager) SwitchProfileWithResult(ctx context.Context, targetICCID strin
 // aidHex 可选，前端已知时直接传入可跳过全量 AID 遍历。
 func (m *Manager) DisableProfile(ctx context.Context, targetICCID string, aidHex string) error {
 	const operation = SwitchOperationDisableProfile
-	m.opMu.Lock()
+	if err := m.acquireOperationLockContext(ctx); err != nil {
+		return err
+	}
 	writeStarted := time.Now()
 	disableSucceeded := false
 	disableStarted := false
@@ -2363,15 +2444,15 @@ type SpaceDelta struct {
 }
 
 type DeleteProfileResult struct {
-	Warning     string
-	WarningCode string
-	SpaceDelta  *SpaceDelta
+	Warning     string      `json:"warning,omitempty"`
+	WarningCode string      `json:"warning_code,omitempty"`
+	SpaceDelta  *SpaceDelta `json:"space_delta,omitempty"`
 }
 
 type DownloadProfileResult struct {
-	Warning     string
-	WarningCode string
-	SpaceDelta  *SpaceDelta
+	Warning     string      `json:"warning,omitempty"`
+	WarningCode string      `json:"warning_code,omitempty"`
+	SpaceDelta  *SpaceDelta `json:"space_delta,omitempty"`
 }
 
 type spaceDeltaOperation string
@@ -3004,7 +3085,9 @@ func (m *Manager) DownloadProfile(ctx context.Context, aidHex, smdp, matchingID,
 		}
 	}
 	result := DownloadProfileResult{}
-	m.opMu.Lock()
+	if err := m.acquireOperationLockContext(ctx); err != nil {
+		return DownloadProfileResult{}, err
+	}
 	writeStarted := time.Now()
 	defer func() {
 		m.logWriteOperationHold("download_profile", writeStarted)
@@ -3089,7 +3172,6 @@ func (m *Manager) DownloadProfile(ctx context.Context, aidHex, smdp, matchingID,
 	logger.Info("开始下载 eSIM profile",
 		"device", m.deviceID,
 		"smdp", parsedURL.Host,
-		"matchingID", matchingID,
 		"AID", aidHex)
 
 	installStarted := false
@@ -3112,14 +3194,12 @@ func (m *Manager) DownloadProfile(ctx context.Context, aidHex, smdp, matchingID,
 		logger.Warn("下载 eSIM profile 失败",
 			"device", m.deviceID,
 			"smdp", parsedURL.Host,
-			"matchingID", matchingID,
 			"AID", aidHex,
 			"freeNvram_before", beforeFreeNvramBytes,
 			"error_code", downloadErr.Code,
 			"bpp_command_id", downloadErr.BPPCommandID,
 			"bpp_error_reason", downloadErr.BPPErrorReason,
-			"details", downloadErr.Details,
-			"err", err)
+			"error_type", fmt.Sprintf("%T", err))
 		if installStarted && preDownloadNotificationsErr == nil {
 			report("notify", "安装结果异常，正在确认并发送下载通知...", 90)
 			m.closeLPAClientForOperation("download_profile_finalize_error", client)
@@ -3226,7 +3306,9 @@ func imeiLuhnCheckDigit(base string) byte {
 // RenameProfile 修改指定 ICCID 的 eSIM profile 名称（Nickname）
 // aidHex 可选，前端已知时直接传入可跳过全量 AID 遍历
 func (m *Manager) RenameProfile(targetICCID string, newName string, aidHex string) error {
-	m.opMu.Lock()
+	if err := m.acquireOperationLock(); err != nil {
+		return err
+	}
 	writeStarted := time.Now()
 	defer func() {
 		m.logWriteOperationHold("rename_profile", writeStarted)
@@ -3278,7 +3360,9 @@ func (m *Manager) RenameProfile(targetICCID string, newName string, aidHex strin
 // DeleteProfile 删除指定 ICCID 的 eSIM profile
 // aidHex 可选，前端已知时直接传入可跳过全量 AID 遍历
 func (m *Manager) DeleteProfile(targetICCID string, aidHex string) (DeleteProfileResult, error) {
-	m.opMu.Lock()
+	if err := m.acquireOperationLock(); err != nil {
+		return DeleteProfileResult{}, err
+	}
 	writeStarted := time.Now()
 	defer func() {
 		m.logWriteOperationHold("delete_profile", writeStarted)

@@ -34,7 +34,7 @@ struct APIClient {
     }
 
     func get<T: Decodable>(_ path: String, as type: T.Type = T.self) async throws -> T {
-        let url = Self.base.appendingPathComponent(path)
+        let url = Self.makeURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         let (data, response) = try await session.data(for: request)
@@ -48,7 +48,7 @@ struct APIClient {
         body: Encodable? = nil,
         as type: T.Type = T.self
     ) async throws -> T {
-        let url = Self.base.appendingPathComponent(path)
+        let url = Self.makeURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = method
         if let body {
@@ -61,7 +61,7 @@ struct APIClient {
     }
 
     func send(_ path: String, method: String = "POST", body: Encodable? = nil) async throws {
-        let url = Self.base.appendingPathComponent(path)
+        let url = Self.makeURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = method
         if let body {
@@ -77,31 +77,63 @@ struct APIClient {
         guard (200..<300).contains(http.statusCode) else {
             if let payload = try? JSONDecoder().decode(APIErrorPayload.self, from: data),
                !payload.error.isEmpty {
-                throw APIError.server(http.statusCode, payload.error)
+                throw APIError.server(
+                    http.statusCode,
+                    code: payload.code,
+                    message: payload.error,
+                    recoverable: payload.recoverable ?? false)
             }
             throw APIError.httpStatus(http.statusCode)
         }
+    }
+
+    private static func makeURL(_ path: String) -> URL {
+        let components = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        let cleanPath = String(components[0])
+        let url = base.appendingPathComponent(cleanPath)
+        guard components.count == 2,
+              var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        urlComponents.percentEncodedQuery = String(components[1])
+        return urlComponents.url ?? url
     }
 }
 
 private struct APIErrorPayload: Decodable {
     let error: String
+    let code: String?
+    let recoverable: Bool?
 }
 
 enum APIError: LocalizedError {
     case httpStatus(Int)
-    case server(Int, String)
+    case server(Int, code: String?, message: String, recoverable: Bool)
 
     var statusCode: Int {
         switch self {
-        case .httpStatus(let code), .server(let code, _): return code
+        case .httpStatus(let code), .server(let code, _, _, _): return code
+        }
+    }
+
+    var code: String? {
+        switch self {
+        case .httpStatus: return nil
+        case .server(_, let code, _, _): return code
+        }
+    }
+
+    var isRecoverable: Bool {
+        switch self {
+        case .httpStatus: return true
+        case .server(_, _, _, let recoverable): return recoverable
         }
     }
 
     var errorDescription: String? {
         switch self {
         case .httpStatus(let code): return "服务返回错误（HTTP \(code)）"
-        case .server(_, let message): return message
+        case .server(_, _, let message, _): return message
         }
     }
 }
