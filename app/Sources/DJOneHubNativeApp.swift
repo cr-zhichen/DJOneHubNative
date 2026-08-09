@@ -81,6 +81,7 @@ private final class AppDependencies: ObservableObject {
     let backend: BackendProcess
     let store: DashboardStore
     let smsStore: SMSStore
+    let attentionStore: AttentionStore
     let updateChecker: UpdateChecker
 
     init() {
@@ -88,6 +89,7 @@ private final class AppDependencies: ObservableObject {
         self.backend = backend
         store = DashboardStore(backend: backend)
         smsStore = .shared
+        attentionStore = .shared
         updateChecker = .shared
     }
 }
@@ -130,13 +132,20 @@ private struct DJOneHubMenuBarScene: Scene {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarStatusMenu(appDelegate: appDelegate)
+            MenuBarDashboardPanel(
+                appDelegate: appDelegate,
+                backend: dependencies.backend,
+                store: dependencies.store,
+                smsStore: dependencies.smsStore,
+                attentionStore: dependencies.attentionStore,
+                updateChecker: dependencies.updateChecker)
         } label: {
             MenuBarStatusLabel(
                 appDelegate: appDelegate,
+                attentionStore: dependencies.attentionStore,
                 store: dependencies.store)
         }
-        .menuBarExtraStyle(.menu)
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -149,6 +158,7 @@ private struct MainAppContent: View {
             .environmentObject(dependencies.backend)
             .environmentObject(dependencies.store)
             .environmentObject(dependencies.smsStore)
+            .environmentObject(dependencies.attentionStore)
             .environmentObject(dependencies.updateChecker)
             .frame(minWidth: 760, minHeight: 480)
             .onAppear {
@@ -371,6 +381,8 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
                     options: displayOptions,
                     unavailableDescription: "网络状态暂时不可用"),
                 rateTitles: displayOptions.rateTitles(download: "—", upload: "—"),
+                downloadRate: "—",
+                uploadRate: "—",
                 networkSummary: "网络状态暂时不可用",
                 trafficSummary: "等待下一次刷新…")
             return
@@ -383,6 +395,8 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
                     options: displayOptions,
                     unavailableDescription: "未检测到模块"),
                 rateTitles: displayOptions.rateTitles(download: "—", upload: "—"),
+                downloadRate: "—",
+                uploadRate: "—",
                 networkSummary: "未检测到模块",
                 trafficSummary: "实时流量不可用")
             return
@@ -415,10 +429,14 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
         }
 
         let rateTitles: MenuBarRateTitles
+        let downloadRate: String
+        let uploadRate: String
         let trafficSummary: String
         if traffic?.available == true {
             let download = formatRate(downloadBytesPerSecond)
             let upload = formatRate(uploadBytesPerSecond)
+            downloadRate = download
+            uploadRate = upload
             rateTitles = displayOptions.rateTitles(download: download, upload: upload)
             if downloadBytesPerSecond == nil || uploadBytesPerSecond == nil {
                 trafficSummary = "正在计算实时流量…"
@@ -426,6 +444,8 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
                 trafficSummary = "下载 \(download)  ·  上传 \(upload)"
             }
         } else {
+            downloadRate = "—"
+            uploadRate = "—"
             rateTitles = displayOptions.rateTitles(download: "—", upload: "—")
             trafficSummary = traffic == nil
                 ? "实时流量等待采样…" : "实时流量不可用"
@@ -434,6 +454,8 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
         menuBarPresentation = MenuBarPresentation(
             image: image,
             rateTitles: rateTitles,
+            downloadRate: downloadRate,
+            uploadRate: uploadRate,
             networkSummary: networkSummary,
             trafficSummary: trafficSummary)
     }
@@ -584,6 +606,8 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
 struct MenuBarPresentation {
     let image: NSImage?
     let rateTitles: MenuBarRateTitles
+    let downloadRate: String
+    let uploadRate: String
     let networkSummary: String
     let trafficSummary: String
 
@@ -609,6 +633,8 @@ struct MenuBarPresentation {
         return MenuBarPresentation(
             image: image,
             rateTitles: displayOptions.rateTitles(download: "—", upload: "—"),
+            downloadRate: "—",
+            uploadRate: "—",
             networkSummary: "正在读取网络状态…",
             trafficSummary: "实时流量等待采样…")
     }
@@ -618,11 +644,23 @@ private struct MenuBarStatusLabel: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var appDelegate: AppDelegate
     @ObservedObject private var mainWindowRequests = MainWindowRequestCenter.shared
+    @ObservedObject var attentionStore: AttentionStore
     @State private var handledWindowRequest = 0
     let store: DashboardStore
 
     private var presentation: MenuBarPresentation {
         appDelegate.menuBarPresentation
+    }
+
+    private var menuBarBadgeImage: NSImage? {
+        guard attentionStore.hasAttention else { return nil }
+        return makeMenuBarAttentionBadgeImage(count: attentionStore.totalCount)
+    }
+
+    private var accessibilitySummary: String {
+        [presentation.accessibilitySummary, attentionStore.accessibilitySummary]
+            .compactMap { $0 }
+            .joined(separator: "；")
     }
 
     var body: some View {
@@ -639,11 +677,18 @@ private struct MenuBarStatusLabel: View {
                     .font(.caption2)
                     .monospacedDigit()
             }
+            if let badgeImage = menuBarBadgeImage {
+                Image(nsImage: badgeImage)
+                    .renderingMode(.original)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: badgeImage.size.width, height: badgeImage.size.height)
+            }
         }
         .fixedSize()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(presentation.accessibilitySummary)
-        .help(presentation.accessibilitySummary)
+        .accessibilityLabel(accessibilitySummary)
+        .help(accessibilitySummary)
         .onAppear {
             appDelegate.bindDashboardStore(store)
             handleMainWindowRequest()
@@ -665,35 +710,868 @@ private struct MenuBarStatusLabel: View {
     }
 }
 
-private struct MenuBarStatusMenu: View {
+/// 菜单栏标签只保留一个动态 SwiftUI Text；徽标文字预先绘制进 NSImage，
+/// 避免 MenuBarExtra 对多个动态 Text 子节点的运行时限制。
+@MainActor
+private func makeMenuBarAttentionBadgeImage(count: Int) -> NSImage {
+    let title = AttentionStore.compactCount(count) as NSString
+    let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
+    let attributes: [NSAttributedString.Key: Any] = [
+        .font: font,
+        .foregroundColor: NSColor.white,
+    ]
+    let textSize = title.size(withAttributes: attributes)
+    let height: CGFloat = 14
+    let width = max(16, ceil(textSize.width) + 8)
+    let image = NSImage(size: NSSize(width: width, height: height))
+    image.lockFocus()
+    NSColor.systemRed.setFill()
+    NSBezierPath(
+        roundedRect: NSRect(x: 0, y: 1, width: width, height: height - 2),
+        xRadius: (height - 2) / 2,
+        yRadius: (height - 2) / 2
+    ).fill()
+    title.draw(
+        at: NSPoint(
+            x: floor((width - textSize.width) / 2),
+            y: floor((height - textSize.height) / 2)),
+        withAttributes: attributes)
+    image.unlockFocus()
+    image.isTemplate = false
+    image.accessibilityDescription = "待处理提醒 (count) 个"
+    return image
+}
+
+private struct MenuBarDashboardPanel: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var appDelegate: AppDelegate
+    @ObservedObject var backend: BackendProcess
+    @ObservedObject var store: DashboardStore
+    @ObservedObject var smsStore: SMSStore
+    @ObservedObject var attentionStore: AttentionStore
+    @ObservedObject var updateChecker: UpdateChecker
+
+    @AppStorage(MenuBarDisplayOptions.showSignalKey) private var menuBarShowSignal = false
+    @AppStorage(MenuBarDisplayOptions.showDownloadKey) private var menuBarShowDownload = false
+    @AppStorage(MenuBarDisplayOptions.showUploadKey) private var menuBarShowUpload = false
+    @AppStorage("silentLaunch") private var silentLaunchEnabled = false
+
+    @State private var autoLaunchEnabled = false
+    @State private var requestingNotificationPermission = false
+    @StateObject private var trafficHistory = MenuBarTrafficHistory()
+    @StateObject private var routingStore = RoutingStore()
 
     private var presentation: MenuBarPresentation {
         appDelegate.menuBarPresentation
     }
 
     var body: some View {
-        Text(presentation.networkSummary)
-        Text(presentation.trafficSummary)
+        VStack(spacing: 0) {
+            header
 
-        Divider()
+            Divider()
 
-        Button("显示主界面") {
-            NSApp.activate(ignoringOtherApps: true)
-            if AppRuntimeConfiguration.usesModernSceneLifecycle {
-                openWindow(id: AppSceneID.mainWindow)
-            } else {
-                appDelegate.showMainWindow()
+            VStack(spacing: 0) {
+                trafficSection
+
+                Divider()
+
+                attentionAndRoutingSection
+
+                Divider()
+
+                featureControlsSection
+                updateSection
+            }
+            .padding(.horizontal, 12)
+
+            Divider()
+
+            footer
+        }
+        .frame(width: 224)
+        .onAppear {
+            appDelegate.bindDashboardStore(store)
+            autoLaunchEnabled = AutoLaunch.isEnabled
+            if case .running = backend.state {
+                refreshRoutingStatus()
+                routingStore.beginPolling()
             }
         }
-
-        Divider()
-
-        Button("退出 DJOneHub") {
-            NSApp.terminate(nil)
+        .onDisappear {
+            routingStore.endPolling()
         }
-        .keyboardShortcut("q", modifiers: .command)
+        .onReceive(store.$traffic) { snapshot in
+            trafficHistory.consume(snapshot)
+        }
+        .onReceive(backend.$state) { state in
+            switch state {
+            case .running:
+                refreshRoutingStatus()
+                routingStore.beginPolling()
+            default:
+                routingStore.endPolling()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AutoLaunch.didChangeNotification)) { _ in
+            autoLaunchEnabled = AutoLaunch.isEnabled
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .center, spacing: 6) {
+                Text(networkTitle)
+                    .font(.headline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+
+                Spacer(minLength: 8)
+
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(connectionTint)
+                        .frame(width: 6, height: 6)
+                    Text(connectionStatusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .fixedSize()
+                .accessibilityElement(children: .combine)
+
+                Button(store.networkRecovering ? "刷新中…" : "刷新") {
+                    store.refresh()
+                }
+                .buttonStyle(.plain)
+                .controlSize(.small)
+                .foregroundStyle(.secondary)
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(backend.state != .running || store.networkRecovering)
+                .help("立即刷新（⌘R）")
+                .accessibilityLabel(store.networkRecovering ? "正在恢复网络" : "立即刷新")
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(networkDetail)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Spacer(minLength: 8)
+
+                Text(communicationSummaryText)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            if let connectionDetailText {
+                Text(connectionDetailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .help("\(networkDetail) · \(lastUpdatedCompactText)")
+    }
+
+    private var trafficSection: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("实时流量")
+                .font(.callout.weight(.semibold))
+
+            HStack(spacing: 16) {
+                trafficRateMetric(
+                    title: "下载",
+                    value: presentation.downloadRate)
+                trafficRateMetric(
+                    title: "上传",
+                    value: presentation.uploadRate)
+            }
+
+            if trafficHistory.samples.isEmpty {
+                Text(trafficStatusText ?? "等待流量采样")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                MenuBarTrafficChart(samples: trafficHistory.samples)
+            }
+
+            Text(sessionSummaryText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .padding(.vertical, 10)
+    }
+
+    private var featureControlsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("功能")
+                .font(.callout.weight(.semibold))
+                .padding(.bottom, 4)
+
+            controlRow(
+                title: "短信通知",
+                detail: requestingNotificationPermission
+                    ? "正在请求系统通知权限…" : "收到新短信时显示系统通知",
+                isOn: notificationsBinding,
+                isEnabled: !requestingNotificationPermission)
+            controlRow(
+                title: "接管短信",
+                detail: "保存到本机并清理模块中的原始短信",
+                isOn: smsAdoptBinding,
+                isEnabled: backend.state == .running)
+            controlRow(
+                title: store.voiceSwitching ? "语音功能（切换中…）" : "语音功能",
+                detail: "启用 USB 音频与通话能力",
+                isOn: voiceBinding,
+                isEnabled: backend.state == .running && !store.voiceSwitching)
+
+            if let voiceError = store.voiceError, !voiceError.isEmpty {
+                Text("语音功能：\(formatMenuText(voiceError, limit: 80))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    private var attentionAndRoutingSection: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Text("提醒")
+                    .font(.callout.weight(.semibold))
+
+                Spacer(minLength: 6)
+
+                if !attentionStore.hasAttention {
+                    Text("无未读")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if attentionStore.unreadSMSCount > 0 {
+                    attentionCounter(
+                        title: "短信",
+                        count: attentionStore.unreadSMSCount,
+                        accessibilityName: "未读短信")
+                }
+                if attentionStore.unviewedCallCount > 0 {
+                    attentionCounter(
+                        title: "电话",
+                        count: attentionStore.unviewedCallCount,
+                        accessibilityName: "未查看电话")
+                }
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("应用分流")
+                    .font(.callout.weight(.semibold))
+
+                Spacer(minLength: 6)
+
+                Text(routingStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            if let routingDetailText {
+                Text(routingDetailText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 9)
+        .help(routingStore.errorMessage ?? routingDetailText ?? routingStatusText)
+    }
+
+    private func attentionCounter(
+        title: String,
+        count: Int,
+        accessibilityName: String
+    ) -> some View {
+        HStack(spacing: 3) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            AttentionBadge(count: count, accessibilityName: accessibilityName)
+        }
+        .fixedSize()
+    }
+
+    private var routingStatusText: String {
+        guard backend.state == .running else { return "服务未运行" }
+        if routingStore.isSwitching {
+            return routingStore.pendingEnabled == false ? "正在停用" : "正在启用"
+        }
+        switch routingStore.loadPhase {
+        case .idle, .loading:
+            return "读取中"
+        case .failed:
+            return "不可用"
+        case .loaded:
+            guard routingStore.runtime.enabled else { return "未启用" }
+            return routingStore.runtime.mode?.title ?? routingStore.config.mode.title
+        }
+    }
+
+    private var routingDetailText: String? {
+        guard backend.state == .running,
+              routingStore.isLoaded,
+              routingStore.runtime.enabled else { return nil }
+        switch routingStore.runtime.mode ?? routingStore.config.mode {
+        case .independent:
+            let rules = routingStore.config.applications.count
+            return rules > 0
+                ? "\(rules) 个规则 · 默认 \(routingStore.config.defaultAction.title)"
+                : "默认 \(routingStore.config.defaultAction.title)"
+        case .clash:
+            return routingStore.runtime.socksAddress
+                ?? "SOCKS5 127.0.0.1:\(routingStore.config.clashListenPort)"
+        }
+    }
+
+    private func refreshRoutingStatus() {
+        if routingStore.isLoaded {
+            Task { await routingStore.refreshRuntime() }
+        } else {
+            routingStore.load()
+        }
+    }
+
+    @ViewBuilder
+    private var updateSection: some View {
+        if let release = updateChecker.pendingUpdate {
+            Divider()
+
+            HStack(spacing: 8) {
+                Text("新版本 \(release.tagName) 可用")
+                    .font(.callout)
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Button("下载") {
+                    if let url = updateChecker.downloadURL {
+                        NSWorkspace.shared.open(url)
+                    }
+                    updateChecker.dismissUpdate()
+                }
+                .controlSize(.small)
+                .disabled(updateChecker.downloadURL == nil)
+            }
+            .padding(.vertical, 8)
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            Button {
+                showMainWindow()
+            } label: {
+                Text("打开主界面")
+                    .foregroundStyle(.primary)
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 8)
+
+            Menu {
+                Toggle("登录时启动", isOn: autoLaunchBinding)
+                Toggle("静默启动", isOn: $silentLaunchEnabled)
+
+                Divider()
+
+                Toggle("菜单栏显示信号", isOn: signalDisplayBinding)
+                Toggle("菜单栏显示下载速率", isOn: downloadDisplayBinding)
+                Toggle("菜单栏显示上传速率", isOn: uploadDisplayBinding)
+
+                Divider()
+
+                Button("通知设置…") {
+                    openNotificationSettings()
+                }
+            } label: {
+                Text("设置")
+                    .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("启动方式、菜单栏显示与系统通知设置")
+
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                Text("退出")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("q", modifiers: .command)
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private func trafficRateMetric(
+        title: String,
+        value: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.title3.weight(.medium).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func controlRow(
+        title: String,
+        detail: String,
+        isOn: Binding<Bool>,
+        isEnabled: Bool = true
+    ) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.callout)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .accessibilityLabel(title)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 28)
+        .disabled(!isEnabled)
+        .help(detail)
+    }
+
+    private var networkTitle: String {
+        if let hardwareStatus = store.status?.hardwareStatus, !hardwareStatus.isEmpty {
+            return "未检测到模块"
+        }
+        if let operatorName = store.status?.operatorName?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !operatorName.isEmpty
+        {
+            return operatorName
+        }
+        return "DJOneHub"
+    }
+
+    private var networkDetail: String {
+        let values = [
+            store.status?.networkMode,
+            store.status?.signalDbm.map { "\($0) dBm" },
+            store.status?.radioBand,
+        ]
+        let parts = values.compactMap { value -> String? in
+            guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !value.isEmpty else { return nil }
+            return value
+        }
+        return parts.isEmpty ? presentation.networkSummary : parts.joined(separator: " · ")
+    }
+
+    private var connectionStatusText: String {
+        switch backend.state {
+        case .running:
+            if store.statusStale { return "数据过期" }
+            guard let status = store.status else { return "正在读取" }
+            if status.simInserted == false { return "SIM 未插入" }
+            if let hardwareStatus = status.hardwareStatus, !hardwareStatus.isEmpty {
+                return "模块未连接"
+            }
+            return "已连接"
+        case .starting:
+            return "正在启动"
+        case .stopped:
+            return "已停止"
+        case .failed:
+            return "连接失败"
+        }
+    }
+
+    private var connectionTint: Color {
+        switch backend.state {
+        case .running:
+            if store.statusStale { return .orange }
+            guard let status = store.status else { return .orange }
+            if status.simInserted == false { return .orange }
+            if let hardwareStatus = status.hardwareStatus, !hardwareStatus.isEmpty {
+                return .orange
+            }
+            return .green
+        case .starting:
+            return .orange
+        case .stopped:
+            return Color(nsColor: .secondaryLabelColor)
+        case .failed:
+            return .red
+        }
+    }
+
+    private var autoLaunchBinding: Binding<Bool> {
+        Binding(
+            get: { autoLaunchEnabled },
+            set: { setAutoLaunch($0) })
+    }
+
+    private var notificationsBinding: Binding<Bool> {
+        Binding(
+            get: { smsStore.notificationsEnabled },
+            set: { setNotificationsEnabled($0) })
+    }
+
+    private var smsAdoptBinding: Binding<Bool> {
+        Binding(
+            get: { store.smsAdopt },
+            set: { enabled in
+                if enabled {
+                    guard confirmSystemAction(
+                        title: "开启短信接管？",
+                        message: "收到的短信将保存到本机，并自动清理 SIM 卡与模块中的原始短信。",
+                        confirmTitle: "开启短信接管"
+                    ) else { return }
+                }
+                store.setSMSAdopt(enabled)
+            })
+    }
+
+    private var voiceBinding: Binding<Bool> {
+        Binding(
+            get: { store.voiceEnabled },
+            set: { enabled in
+                guard confirmSystemAction(
+                    title: enabled ? "启用语音功能？" : "关闭语音功能？",
+                    message: "切换语音功能会让模块短暂重启，期间网络和通话暂时不可用。",
+                    confirmTitle: enabled ? "启用并重启模块" : "关闭并重启模块"
+                ) else { return }
+                store.setVoiceEnabled(enabled)
+            })
+    }
+
+    private var signalDisplayBinding: Binding<Bool> {
+        Binding(
+            get: { menuBarShowSignal },
+            set: {
+                menuBarShowSignal = $0
+                notifyMenuBarDisplayOptionsChanged()
+            })
+    }
+
+    private var downloadDisplayBinding: Binding<Bool> {
+        Binding(
+            get: { menuBarShowDownload },
+            set: {
+                menuBarShowDownload = $0
+                notifyMenuBarDisplayOptionsChanged()
+            })
+    }
+
+    private var uploadDisplayBinding: Binding<Bool> {
+        Binding(
+            get: { menuBarShowUpload },
+            set: {
+                menuBarShowUpload = $0
+                notifyMenuBarDisplayOptionsChanged()
+            })
+    }
+
+    private var connectionDetailText: String? {
+        if case .failed(let reason) = backend.state, !reason.isEmpty {
+            return formatMenuText(reason)
+        }
+        if store.statusStale {
+            return "暂时无法读取模块状态，当前显示上一次数据。"
+        }
+        if let hardwareStatus = store.status?.hardwareStatus, !hardwareStatus.isEmpty {
+            return formatMenuText(hardwareStatus)
+        }
+        return nil
+    }
+
+    private var trafficStatusText: String? {
+        if store.traffic?.available == false {
+            let message = store.traffic?.error ?? "实时流量暂时不可用"
+            return formatMenuText(message)
+        }
+        return nil
+    }
+
+    private var communicationSummaryText: String {
+        let smsSummary = "\(smsStore.items.count) 条短信"
+        switch store.callStatus.state {
+        case "incoming", "active", "dialing", "alerting":
+            return "\(callStatusText) · \(smsSummary)"
+        default:
+            return smsSummary
+        }
+    }
+
+    private var sessionSummaryText: String {
+        let download = trafficMetric(store.traffic?.sessionRX)
+        let upload = trafficMetric(store.traffic?.sessionTX)
+        return "本次  下载 \(download) · 上传 \(upload)"
+    }
+
+    private var callStatusText: String {
+        switch store.callStatus.state {
+        case "incoming": return "来电"
+        case "active": return "通话中"
+        case "dialing": return "拨号中"
+        case "alerting": return "呼叫中"
+        case "unknown": return "状态未知"
+        default: return "空闲"
+        }
+    }
+
+    private var lastUpdatedCompactText: String {
+        guard let lastUpdated = store.lastUpdated else { return "等待更新" }
+        return "更新 \(lastUpdated.formatted(date: .omitted, time: .standard))"
+    }
+
+    private func trafficMetric(_ bytes: UInt64?) -> String {
+        guard store.traffic?.available == true, let bytes else { return "—" }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .binary
+        formatter.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
+        return formatter.string(fromByteCount: Int64(clamping: bytes))
+    }
+
+    private func formatMenuText(_ text: String, limit: Int = 48) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else { return trimmed }
+        return String(trimmed.prefix(limit)) + "…"
+    }
+
+    private func setAutoLaunch(_ enabled: Bool) {
+        do {
+            try AutoLaunch.setEnabled(enabled)
+            autoLaunchEnabled = enabled
+        } catch {
+            autoLaunchEnabled = AutoLaunch.isEnabled
+            showSystemError(
+                title: "无法修改开机自启",
+                message: error.localizedDescription)
+        }
+    }
+
+    private func setNotificationsEnabled(_ enabled: Bool) {
+        guard enabled else {
+            smsStore.notificationsEnabled = false
+            return
+        }
+
+        requestingNotificationPermission = true
+        Task {
+            let granted = await smsStore.ensureAuthorization()
+            requestingNotificationPermission = false
+            smsStore.notificationsEnabled = granted
+
+            if !granted {
+                showNotificationPermissionAlert()
+            }
+        }
+    }
+
+    private func confirmSystemAction(
+        title: String,
+        message: String,
+        confirmTitle: String
+    ) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: confirmTitle)
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func showSystemError(title: String, message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "好")
+        alert.runModal()
+    }
+
+    private func showNotificationPermissionAlert() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "通知权限未开启"
+        alert.informativeText = "请在系统设置中允许 DJOneHub 发送通知。"
+        alert.addButton(withTitle: "打开通知设置")
+        alert.addButton(withTitle: "取消")
+        if alert.runModal() == .alertFirstButtonReturn {
+            openNotificationSettings()
+        }
+    }
+
+    private func notifyMenuBarDisplayOptionsChanged() {
+        NotificationCenter.default.post(
+            name: MenuBarDisplayOptions.didChangeNotification,
+            object: nil)
+    }
+
+    private func showMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        if AppRuntimeConfiguration.usesModernSceneLifecycle {
+            openWindow(id: AppSceneID.mainWindow)
+        } else {
+            appDelegate.showMainWindow()
+        }
+    }
+
+    private func openNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+private struct MenuBarTrafficChartSample: Identifiable {
+    let id = UUID()
+    let download: Double
+    let upload: Double
+}
+
+private final class MenuBarTrafficHistory: ObservableObject {
+    @Published private(set) var samples: [MenuBarTrafficChartSample] = []
+
+    private struct CounterSample {
+        let interfaceName: String?
+        let rxBytes: UInt64
+        let txBytes: UInt64
+        let sampledAt: TimeInterval
+    }
+
+    private var previous: CounterSample?
+    private let capacity = 48
+
+    func consume(_ snapshot: TrafficSnapshot?) {
+        guard let snapshot,
+              snapshot.available,
+              let rxBytes = snapshot.rxBytes,
+              let txBytes = snapshot.txBytes else {
+            reset()
+            return
+        }
+
+        let current = CounterSample(
+            interfaceName: snapshot.interface,
+            rxBytes: rxBytes,
+            txBytes: txBytes,
+            sampledAt: snapshot.sampledAtMS.map { TimeInterval($0) / 1_000 }
+                ?? Date().timeIntervalSince1970)
+
+        guard let previous else {
+            self.previous = current
+            return
+        }
+
+        guard current.sampledAt != previous.sampledAt else { return }
+
+        let elapsed = current.sampledAt - previous.sampledAt
+        guard current.interfaceName == previous.interfaceName,
+              elapsed > 0,
+              elapsed < 120,
+              current.rxBytes >= previous.rxBytes,
+              current.txBytes >= previous.txBytes else {
+            self.previous = current
+            samples.removeAll()
+            return
+        }
+
+        let sample = MenuBarTrafficChartSample(
+            download: Double(current.rxBytes - previous.rxBytes) / elapsed,
+            upload: Double(current.txBytes - previous.txBytes) / elapsed)
+        self.previous = current
+        samples.append(sample)
+        if samples.count > capacity {
+            samples.removeFirst(samples.count - capacity)
+        }
+    }
+
+    private func reset() {
+        previous = nil
+        if !samples.isEmpty {
+            samples.removeAll()
+        }
+    }
+}
+
+private struct MenuBarTrafficChart: View {
+    let samples: [MenuBarTrafficChartSample]
+
+    var body: some View {
+        Canvas { context, size in
+            let slotWidth = size.width / 48
+            let barWidth = max(1, slotWidth - 2)
+            let startX = size.width - slotWidth * CGFloat(samples.count)
+            let maximum = max(
+                1,
+                samples.reduce(0) { result, sample in
+                    max(result, sample.download + sample.upload)
+                })
+
+            var baseline = Path()
+            baseline.move(to: CGPoint(x: 0, y: size.height - 0.5))
+            baseline.addLine(to: CGPoint(x: size.width, y: size.height - 0.5))
+            context.stroke(
+                baseline,
+                with: .color(Color(nsColor: .separatorColor)),
+                lineWidth: 0.5)
+
+            for (index, sample) in samples.enumerated() {
+                let x = startX + CGFloat(index) * slotWidth
+                let total = sample.download + sample.upload
+                let height = total > 0
+                    ? max(1, CGFloat(total / maximum) * (size.height - 3)) : 0
+
+                guard height > 0 else { continue }
+
+                var bar = Path()
+                bar.addRoundedRect(
+                    in: CGRect(
+                        x: x,
+                        y: size.height - height,
+                        width: barWidth,
+                        height: height),
+                    cornerSize: CGSize(width: 1.5, height: 1.5))
+                context.fill(
+                    bar,
+                    with: .color(Color.primary.opacity(0.42)))
+            }
+        }
+        .frame(height: 28)
+        .accessibilityHidden(true)
     }
 }
 

@@ -3,6 +3,7 @@ import SwiftUI
 /// 通话记录弹窗
 struct CallHistoryView: View {
     @EnvironmentObject private var store: DashboardStore
+    @EnvironmentObject private var attentionStore: AttentionStore
     @Environment(\.dismiss) private var dismiss
 
     /// 待确认删除的单条记录
@@ -70,6 +71,13 @@ struct CallHistoryView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("将删除全部 \(store.callHistory.count) 条通话记录，此操作不可恢复。")
+        }
+        .onAppear {
+            attentionStore.setViewingCalls(true)
+            store.loadCallHistory()
+        }
+        .onDisappear {
+            attentionStore.setViewingCalls(false)
         }
     }
 }

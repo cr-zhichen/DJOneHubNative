@@ -81,11 +81,23 @@ final class DashboardStore: ObservableObject {
     /// 本次来电时间（用于详情展示）
     @Published var incomingAt: Date?
     /// 是否显示来电详情弹窗
-    @Published var showCallDetail = false
+    @Published var showCallDetail = false {
+        didSet {
+            if showCallDetail {
+                AttentionStore.shared.markCallsViewed()
+            }
+        }
+    }
     /// 通话记录
     @Published var callHistory: [CallRecord] = []
     /// 是否显示通话记录弹窗
-    @Published var showCallHistory = false
+    @Published var showCallHistory = false {
+        didSet {
+            if showCallHistory {
+                AttentionStore.shared.markCallsViewed()
+            }
+        }
+    }
 
     private let backend: BackendProcess
     private var timer: Timer?
@@ -507,6 +519,7 @@ final class DashboardStore: ObservableObject {
         Task {
             do {
                 let list: [CallRecord] = try await APIClient().get("api/calls")
+                AttentionStore.shared.reconcileCallHistory(list)
                 callHistory = list
             } catch {
                 // 拉取失败保持旧数据
@@ -520,6 +533,7 @@ final class DashboardStore: ObservableObject {
             do {
                 let _: CallClearResult = try await APIClient().send("api/calls/clear")
                 callHistory = []
+                AttentionStore.shared.markCallsViewed()
             } catch {
                 toast = ToastItem(message: "清空失败：\(error.localizedDescription)", isSuccess: false, title: "通话记录")
             }
