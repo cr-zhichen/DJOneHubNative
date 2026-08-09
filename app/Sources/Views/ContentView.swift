@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum AppSection: String, CaseIterable, Identifiable {
@@ -26,6 +27,7 @@ struct ContentView: View {
     @EnvironmentObject private var backend: BackendProcess
     @EnvironmentObject private var store: DashboardStore
     @EnvironmentObject private var smsStore: SMSStore
+    @EnvironmentObject private var attentionStore: AttentionStore
     @EnvironmentObject private var updateChecker: UpdateChecker
     @State private var selection: AppSection? = .home
     @State private var showUpdatePrompt = false
@@ -34,8 +36,16 @@ struct ContentView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 ForEach(AppSection.allCases) { section in
-                    Label(section.rawValue, systemImage: section.icon)
-                        .tag(section)
+                    HStack(spacing: 8) {
+                        Label(section.rawValue, systemImage: section.icon)
+                        Spacer(minLength: 4)
+                        if let count = attentionCount(for: section), count > 0 {
+                            AttentionBadge(
+                                count: count,
+                                accessibilityName: section == .sms ? "未读短信" : "未查看电话")
+                        }
+                    }
+                    .tag(section)
                 }
             }
             .listStyle(.sidebar)
@@ -57,6 +67,9 @@ struct ContentView: View {
         }
         .onAppear {
             smsStore.viewingSMS = selection == .sms
+            if selection == .sms {
+                attentionStore.markSMSViewed()
+            }
             showUpdatePrompt = updateChecker.pendingUpdate != nil
             // 启动即点击通知时，pendingOpenSender 可能早于 onChange 挂载设置，这里补一次
             if smsStore.pendingOpenSender != nil {
@@ -65,6 +78,14 @@ struct ContentView: View {
         }
         .onChange(of: selection) { newValue in
             smsStore.viewingSMS = newValue == .sms
+            if newValue == .sms {
+                attentionStore.markSMSViewed()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if selection == .sms, smsStore.viewingSMS {
+                attentionStore.markSMSViewed()
+            }
         }
         .onChange(of: updateChecker.pendingUpdate != nil) { shown in
             showUpdatePrompt = shown
@@ -103,6 +124,7 @@ struct ContentView: View {
         .onChange(of: store.showCallDetail) { shown in
             // 点击来电通知：切回首页并弹出通话详情
             if shown {
+                attentionStore.markCallsViewed()
                 selection = .home
             }
         }
@@ -117,6 +139,17 @@ struct ContentView: View {
         case .routing: TrafficRoutingView()
         case .debug: DiagnosticsView()
         case .about: AboutView()
+        }
+    }
+
+    private func attentionCount(for section: AppSection) -> Int? {
+        switch section {
+        case .home:
+            return attentionStore.unviewedCallCount
+        case .sms:
+            return attentionStore.unreadSMSCount
+        default:
+            return nil
         }
     }
 }

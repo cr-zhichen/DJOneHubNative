@@ -109,6 +109,8 @@ struct DeviceStatus: Decodable {
 
 /// GET /api/sms：顶层是数组
 struct SMSItem: Decodable, Identifiable {
+    /// 后端生成的稳定逻辑消息 ID，用于精确删除；旧后端可能不提供。
+    let backendID: String?
     let sender: String?
     let content: String?
     let code: String?
@@ -127,6 +129,7 @@ struct SMSItem: Decodable, Identifiable {
     var isOutgoing: Bool { direction == "out" }
 
     enum CodingKeys: String, CodingKey {
+        case backendID = "id"
         case sender, content, code, timestamp, archived, direction
         case moduleStorage = "module_storage"
         case moduleIndex = "module_index"
@@ -145,13 +148,22 @@ struct SMSStorageResponse: Decodable {
 
 /// POST /api/sms/delete
 struct SMSDeleteRequest: Encodable {
+    let id: String?
     let storage: String?
     let index: Int
     let sender: String?
     let content: String?
     let timestamp: Date?
 
-    init(storage: String? = nil, index: Int = 0, sender: String? = nil, content: String? = nil, timestamp: Date? = nil) {
+    init(
+        id: String? = nil,
+        storage: String? = nil,
+        index: Int = 0,
+        sender: String? = nil,
+        content: String? = nil,
+        timestamp: Date? = nil
+    ) {
+        self.id = id
         self.storage = storage
         self.index = index
         self.sender = sender
@@ -162,6 +174,21 @@ struct SMSDeleteRequest: Encodable {
 
 struct SMSDeleteResult: Decodable {
     let deleted: Bool
+}
+
+/// POST /api/sms/delete-sender
+struct SMSDeleteSenderRequest: Encodable {
+    let sender: String
+}
+
+struct SMSDeleteSenderResult: Decodable {
+    let deleted: Bool
+    let deletedCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case deleted
+        case deletedCount = "deleted_count"
+    }
 }
 
 /// POST /api/sms/adopt

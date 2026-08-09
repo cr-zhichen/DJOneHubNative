@@ -3,10 +3,14 @@ import SwiftUI
 /// 短信会话：左侧会话列表（按号码分组），右侧聊天界面
 struct SMSView: View {
     @EnvironmentObject private var smsStore: SMSStore
+    @EnvironmentObject private var attentionStore: AttentionStore
     @State private var showCompose = false
     @State private var showClearOptions = false
     @State private var selectedItem: SMSItem?
     @State private var selectedPhone: String?
+    @State private var deleteTarget: SMSDeleteTarget?
+    @State private var deleting = false
+    @State private var deleteError: String?
 
     private var conversations: [Conversation] {
         Dictionary(grouping: smsStore.items) { $0.sender ?? "未知号码" }
@@ -31,8 +35,13 @@ struct SMSView: View {
         }
         .navigationTitle("短信")
         .onAppear {
+            smsStore.viewingSMS = true
+            attentionStore.markSMSViewed()
             smsStore.refresh()
             openPendingConversation()
+        }
+        .onDisappear {
+            smsStore.viewingSMS = false
         }
         .onChange(of: smsStore.pendingOpenSender) { sender in
             if sender != nil {
@@ -54,6 +63,45 @@ struct SMSView: View {
         }
         .sheet(isPresented: $showClearOptions) {
             SMSClearView(onDone: { smsStore.refresh(force: true) })
+        }
+        .confirmationDialog(
+            "确认删除？",
+            isPresented: Binding(
+                get: { deleteTarget != nil },
+                set: { if !$0 { deleteTarget = nil } }),
+            titleVisibility: .visible,
+            presenting: deleteTarget
+        ) { target in
+            switch target {
+            case .message(let item):
+                Button("删除此短信", role: .destructive) {
+                    performDelete(.message(item))
+                }
+                .disabled(deleting)
+            case .conversation(let sender, let count):
+                Button("删除全部 \(count) 条短信", role: .destructive) {
+                    performDelete(.conversation(sender: sender, count: count))
+                }
+                .disabled(deleting)
+            }
+            Button("取消", role: .cancel) {}
+        } message: { target in
+            switch target {
+            case .message:
+                Text("这条短信将从实际存储位置删除，此操作不可撤销。")
+            case .conversation(let sender, let count):
+                Text("将删除与 \(sender) 的全部 \(count) 条短信，包括模块存储与本机归档。此操作不可撤销。")
+            }
+        }
+        .alert(
+            "删除失败",
+            isPresented: Binding(
+                get: { deleteError != nil },
+                set: { if !$0 { deleteError = nil } })
+        ) {
+            Button("好", role: .cancel) { deleteError = nil }
+        } message: {
+            Text(deleteError ?? "未知错误")
         }
     }
 
@@ -111,6 +159,15 @@ struct SMSView: View {
             ForEach(conversations) { conversation in
                 ConversationRow(conversation: conversation)
                     .tag(conversation.phone)
+                    .contextMenu {
+                        if let sender = conversation.senderForDeletion {
+                            Button("删除该号码的全部短信…", role: .destructive) {
+                                deleteTarget = .conversation(
+                                    sender: sender,
+                                    count: conversation.messages.count)
+                            }
+                        }
+                    }
             }
         }
         .listStyle(.inset)
@@ -126,6 +183,10 @@ struct SMSView: View {
             ConversationDetailView(
                 conversation: conversation,
                 onOpenMessage: { selectedItem = $0 },
+                onDeleteMessage: { deleteTarget = .message($0) },
+                onDeleteConversation: { sender, count in
+                    deleteTarget = .conversation(sender: sender, count: count)
+                },
                 onSent: { smsStore.refresh(force: true) })
         } else {
             VStack(spacing: 10) {
@@ -135,6 +196,45 @@ struct SMSView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func performDelete(_ target: SMSDeleteTarget) {
+        guard !deleting else { return }
+        deleting = true
+        deleteTarget = nil
+        Task {
+            do {
+                switch target {
+                case .message(let item):
+                    _ = try await smsStore.deleteMessage(item)
+                    if selectedItem?.id == item.id {
+                        selectedItem = nil
+                    }
+                case .conversation(let sender, _):
+                    _ = try await smsStore.deleteMessages(from: sender)
+                    if selectedPhone == sender {
+                        selectedPhone = nil
+                    }
+                }
+                deleting = false
+                smsStore.refresh(force: true)
+            } catch {
+                deleting = false
+                deleteError = error.localizedDescription
+            }
+        }
+    }
+}
+
+private enum SMSDeleteTarget: Identifiable {
+    case message(SMSItem)
+    case conversation(sender: String, count: Int)
+
+    var id: String {
+        switch self {
+        case .message(let item): return "message|\(item.id)"
+        case .conversation(let sender, _): return "conversation|\(sender)"
         }
     }
 }
@@ -147,6 +247,9 @@ struct Conversation: Identifiable {
     var id: String { phone }
     var lastMessage: SMSItem? { messages.last }
     var lastTimestamp: Date { messages.last?.timestamp ?? .distantPast }
+    var senderForDeletion: String? {
+        messages.compactMap(\.sender).first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
 }
 
 struct ConversationRow: View {
@@ -186,6 +289,8 @@ struct ConversationRow: View {
 struct ConversationDetailView: View {
     let conversation: Conversation
     let onOpenMessage: (SMSItem) -> Void
+    let onDeleteMessage: (SMSItem) -> Void
+    let onDeleteConversation: (String, Int) -> Void
     let onSent: () -> Void
 
     @State private var draft = ""
@@ -207,9 +312,14 @@ struct ConversationDetailView: View {
                 ScrollView {
                     VStack(spacing: 8) {
                         ForEach(conversation.messages) { item in
-                            MessageBubble(item: item) {
-                                onOpenMessage(item)
-                            }
+                            MessageBubble(
+                                item: item,
+                                conversationSender: conversation.senderForDeletion,
+                                onOpen: { onOpenMessage(item) },
+                                onDelete: { onDeleteMessage(item) },
+                                onDeleteConversation: { sender in
+                                    onDeleteConversation(sender, conversation.messages.count)
+                                })
                             .id(item.id)
                         }
                     }
@@ -281,7 +391,10 @@ struct ConversationDetailView: View {
 /// 聊天气泡
 struct MessageBubble: View {
     let item: SMSItem
+    let conversationSender: String?
     let onOpen: () -> Void
+    let onDelete: () -> Void
+    let onDeleteConversation: (String) -> Void
 
     private var isOutgoing: Bool { item.isOutgoing }
 
@@ -325,12 +438,30 @@ struct MessageBubble: View {
         }
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity)
+        .contextMenu {
+            Button("查看详情") {
+                onOpen()
+            }
+
+            Divider()
+
+            Button("删除此短信…", role: .destructive) {
+                onDelete()
+            }
+
+            if let conversationSender {
+                Button("删除该号码的全部短信…", role: .destructive) {
+                    onDeleteConversation(conversationSender)
+                }
+            }
+        }
     }
 }
 
 /// 短信详情弹窗：查看内容 + 回复 + 逐条删除
 struct SMSDetailView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var smsStore: SMSStore
     let item: SMSItem
     let onDelete: (Bool) -> Void
     let onReply: () -> Void
@@ -449,20 +580,9 @@ struct SMSDetailView: View {
         deleting = true
         Task {
             do {
-                let client = APIClient()
-                let request: SMSDeleteRequest
-                if item.isFromModule {
-                    request = SMSDeleteRequest(storage: item.moduleStorage ?? "ME", index: item.moduleIndex ?? 0)
-                } else {
-                    request = SMSDeleteRequest(
-                        sender: item.sender,
-                        content: item.content,
-                        timestamp: item.timestamp)
-                }
-                let result: SMSDeleteResult = try await client.send(
-                    "api/sms/delete", body: request)
+                let deleted = try await smsStore.deleteMessage(item)
                 deleting = false
-                onDelete(result.deleted)
+                onDelete(deleted)
             } catch {
                 deleting = false
                 errorMessage = "删除失败：\(error.localizedDescription)"

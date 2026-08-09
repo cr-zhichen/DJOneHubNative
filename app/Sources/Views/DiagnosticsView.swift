@@ -371,6 +371,7 @@ struct DiagnosticATView: View {
 struct DiagnosticNotifyView: View {
     @EnvironmentObject private var smsStore: SMSStore
     @EnvironmentObject private var store: DashboardStore
+    @EnvironmentObject private var attentionStore: AttentionStore
 
     @State private var notifyAuth: String?
     @State private var notifyFeedback: String?
@@ -421,6 +422,49 @@ struct DiagnosticNotifyView: View {
                 }
                 .buttonStyle(.bordered)
                 .help("直接弹出一张自定义来电卡片，验证来电提醒是否正常工作")
+            }
+
+            Divider()
+
+            Text("未读计数调试")
+                .font(.callout.weight(.semibold))
+
+            HStack(spacing: 8) {
+                Button {
+                    attentionStore.incrementUnreadSMSForDebug()
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("增加未读短信")
+                        if attentionStore.unreadSMSCount > 0 {
+                            AttentionBadge(
+                                count: attentionStore.unreadSMSCount,
+                                accessibilityName: "未读短信")
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .help("将未读短信计数增加 1，不创建真实短信")
+
+                Button {
+                    attentionStore.incrementUnviewedCallForDebug()
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("增加未查看电话")
+                        if attentionStore.unviewedCallCount > 0 {
+                            AttentionBadge(
+                                count: attentionStore.unviewedCallCount,
+                                accessibilityName: "未查看电话")
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .help("将未查看电话计数增加 1，不创建真实通话记录")
+
+                Button("计数清零") {
+                    attentionStore.clearForDebug()
+                }
+                .buttonStyle(.bordered)
+                .disabled(!attentionStore.hasAttention)
             }
         }
         .padding(16)

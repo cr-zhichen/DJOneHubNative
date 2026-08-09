@@ -5,6 +5,7 @@ struct HomeView: View {
     @EnvironmentObject private var backend: BackendProcess
     @EnvironmentObject private var store: DashboardStore
     @EnvironmentObject private var smsStore: SMSStore
+    @EnvironmentObject private var attentionStore: AttentionStore
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var showingRebootConfirm = false
@@ -12,7 +13,7 @@ struct HomeView: View {
     @State private var draggedService: Int?
     @State private var showNotifyDeniedAlert = false
     @State private var autoLaunchEnabled = false
-    @State private var silentLaunchEnabled = false
+    @AppStorage("silentLaunch") private var silentLaunchEnabled = false
     @AppStorage(MenuBarDisplayOptions.showSignalKey) private var menuBarShowSignal = false
     @AppStorage(MenuBarDisplayOptions.showDownloadKey) private var menuBarShowDownload = false
     @AppStorage(MenuBarDisplayOptions.showUploadKey) private var menuBarShowUpload = false
@@ -114,7 +115,9 @@ struct HomeView: View {
         .onAppear {
             store.loadServices()
             autoLaunchEnabled = AutoLaunch.isEnabled
-            silentLaunchEnabled = UserDefaults.standard.bool(forKey: "silentLaunch")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AutoLaunch.didChangeNotification)) { _ in
+            autoLaunchEnabled = AutoLaunch.isEnabled
         }
         .confirmationDialog("重启模块？", isPresented: $showingRebootConfirm, titleVisibility: .visible) {
             Button("重启（AT+CFUN=1,1）", role: .destructive) { store.reboot() }
@@ -543,7 +546,14 @@ struct HomeView: View {
             Button {
                 store.showCallHistory = true
             } label: {
-                Label("通话记录（\(store.callHistory.count)）", systemImage: "clock.arrow.circlepath")
+                HStack(spacing: 6) {
+                    Label("通话记录（\(store.callHistory.count)）", systemImage: "clock.arrow.circlepath")
+                    if attentionStore.unviewedCallCount > 0 {
+                        AttentionBadge(
+                            count: attentionStore.unviewedCallCount,
+                            accessibilityName: "未查看电话")
+                    }
+                }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -744,6 +754,7 @@ struct HomeView: View {
 /// 来电/通话详情弹窗
 struct CallDetailView: View {
     @EnvironmentObject private var store: DashboardStore
+    @EnvironmentObject private var attentionStore: AttentionStore
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -797,6 +808,12 @@ struct CallDetailView: View {
         }
         .padding(20)
         .frame(width: 420)
+        .onAppear {
+            attentionStore.setViewingCalls(true)
+        }
+        .onDisappear {
+            attentionStore.setViewingCalls(false)
+        }
     }
 
     private func callStatusText(_ state: String) -> String {

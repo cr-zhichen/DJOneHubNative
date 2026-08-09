@@ -6,7 +6,9 @@ import UserNotifications
 /// 短信数据缓存：后台持续轮询后端，检测到新收到的短信时弹出 macOS 系统通知。
 @MainActor
 final class SMSStore: ObservableObject {
-    static let shared = SMSStore(backend: BackendProcess.shared)
+    static let shared = SMSStore(
+        backend: BackendProcess.shared,
+        attentionStore: .shared)
 
     @Published var items: [SMSItem] = []
     @Published var status: SMSStatus?
@@ -27,8 +29,10 @@ final class SMSStore: ObservableObject {
 
     private static let enabledKey = "smsNotificationsEnabled"
     private static let seenKey = "smsSeenIDs"
+    private static let seenSeededKey = "smsSeenIDsSeeded"
 
     private let backend: BackendProcess
+    private let attentionStore: AttentionStore
     private var timer: Timer?
     private var refreshInFlight = false
     private var cancellables = Set<AnyCancellable>()
@@ -39,14 +43,17 @@ final class SMSStore: ObservableObject {
     /// 防止并发重复弹出授权框
     private var authRequestInFlight = false
 
-    init(backend: BackendProcess) {
+    init(backend: BackendProcess, attentionStore: AttentionStore) {
         self.backend = backend
+        self.attentionStore = attentionStore
         if UserDefaults.standard.object(forKey: Self.enabledKey) == nil {
             UserDefaults.standard.set(true, forKey: Self.enabledKey)
         }
         notificationsEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         seenOrder = UserDefaults.standard.stringArray(forKey: Self.seenKey) ?? []
         seenIDs = Set(seenOrder)
+        didSeed = UserDefaults.standard.bool(forKey: Self.seenSeededKey)
+            || !seenOrder.isEmpty
 
         backend.$state
             .receive(on: RunLoop.main)
@@ -135,16 +142,18 @@ final class SMSStore: ObservableObject {
     private func handleNewMessages(_ list: [SMSItem]) async {
         let incoming = list.filter { !$0.isOutgoing }
         let currentIDs = Set(incoming.map(\.id))
-        let shouldNotify = notificationsEnabled && didSeed
-        let newOnes = shouldNotify ? incoming.filter { !seenIDs.contains($0.id) } : []
+        let newOnes = didSeed ? incoming.filter { !seenIDs.contains($0.id) } : []
         markSeen(currentIDs)
         if !didSeed {
             didSeed = true
+            UserDefaults.standard.set(true, forKey: Self.seenSeededKey)
             return
         }
         guard !newOnes.isEmpty else { return }
+        let isVisible = viewingSMS && NSApp.isActive
+        attentionStore.recordIncomingSMS(count: newOnes.count, isVisible: isVisible)
         // 正在短信页查看时无需再弹通知（App 在前台）
-        if viewingSMS && NSApp.isActive { return }
+        guard !isVisible, notificationsEnabled else { return }
         // 未授权时请求授权（首次收到短信时弹出系统授权框）
         guard await ensureAuthorization() else { return }
         for item in newOnes.sorted(by: { $0.timestamp < $1.timestamp }) {
@@ -193,6 +202,45 @@ final class SMSStore: ObservableObject {
         pendingOpenSender = nil
     }
 
+    // MARK: - 删除
+
+    func deleteMessage(_ item: SMSItem) async throws -> Bool {
+        let request: SMSDeleteRequest
+        if item.isFromModule {
+            request = SMSDeleteRequest(
+                id: item.backendID,
+                storage: item.moduleStorage ?? "ME",
+                index: item.moduleIndex ?? 0)
+        } else {
+            request = SMSDeleteRequest(
+                id: item.backendID,
+                sender: item.sender,
+                content: item.content,
+                timestamp: item.timestamp)
+        }
+        let result: SMSDeleteResult = try await APIClient().send(
+            "api/sms/delete",
+            body: request)
+        if result.deleted {
+            items.removeAll { $0.id == item.id }
+        }
+        return result.deleted
+    }
+
+    func deleteMessages(from sender: String) async throws -> Int {
+        let trimmed = sender.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+        let result: SMSDeleteSenderResult = try await APIClient().send(
+            "api/sms/delete-sender",
+            body: SMSDeleteSenderRequest(sender: trimmed))
+        if result.deletedCount > 0 {
+            items.removeAll {
+                $0.sender?.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+            }
+        }
+        return result.deletedCount
+    }
+
     // MARK: - 调试：模拟通知
 
     /// 模拟一条新短信通知（走与真实短信相同的发送路径），返回结果描述
@@ -210,6 +258,7 @@ final class SMSStore: ObservableObject {
             return "通知已发送到通知中心，但横幅/提示被系统关闭，请点击\"打开通知设置\"将样式改为横幅"
         }
         let item = SMSItem(
+            backendID: nil,
             sender: "+8613800000000",
             content: "这是一条模拟短信，用于测试通知功能。",
             code: nil,

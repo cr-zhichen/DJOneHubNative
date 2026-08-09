@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -34,6 +35,7 @@ import (
 // Web 前端已移除：原生 macOS 应用不再需要内嵌网页资源
 
 type receivedSMS struct {
+	ID        string    `json:"id,omitempty"`
 	Sender    string    `json:"sender"`
 	Content   string    `json:"content"`
 	Code      string    `json:"code,omitempty"`
@@ -600,6 +602,11 @@ func smsCacheKey(item receivedSMS) string {
 	return item.Sender + "\x00" + item.Content + "\x00" + item.Timestamp.Format(time.RFC3339Nano)
 }
 
+func smsStableID(item receivedSMS) string {
+	digest := sha256.Sum256([]byte(smsCacheKey(item)))
+	return hex.EncodeToString(digest[:])
+}
+
 func (a *app) setSMSPollStatus(err error) {
 	a.smsMu.Lock()
 	defer a.smsMu.Unlock()
@@ -741,6 +748,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/sms/send", a.sendSMS)
 	mux.HandleFunc("POST /api/sms/refresh", a.refreshSMS)
 	mux.HandleFunc("POST /api/sms/delete", a.deleteSMS)
+	mux.HandleFunc("POST /api/sms/delete-sender", a.deleteSMSSender)
 	mux.HandleFunc("POST /api/sms/adopt", a.setSMSAdopt)
 	mux.HandleFunc("GET /api/sms/adopt", a.getSMSAdopt)
 	mux.HandleFunc("POST /api/sms/clear", a.clearSMS)
@@ -1296,26 +1304,48 @@ func (ar *smsArchive) add(items []receivedSMS) int {
 	return added
 }
 
-// remove 按发送者+内容+时间窗口匹配删除归档中的短信
+// remove 按发送者、内容和最接近的时间删除一条归档短信。
 func (ar *smsArchive) remove(sender, content string, ts time.Time) {
 	ar.mu.Lock()
 	defer ar.mu.Unlock()
-	if ts.IsZero() {
+	index := closestSMSMatchIndex(ar.items, sender, content, ts)
+	if index < 0 {
 		return
 	}
+	ar.items = append(ar.items[:index], ar.items[index+1:]...)
+	ar.save()
+}
+
+// removeID 删除同一逻辑短信的全部归档表示。
+func (ar *smsArchive) removeID(id string) int {
+	ar.mu.Lock()
+	defer ar.mu.Unlock()
+	filtered, deleted := removeSMSByID(ar.items, id)
+	if deleted > 0 {
+		ar.items = filtered
+		ar.save()
+	}
+	return deleted
+}
+
+// removeSender 删除同一号码的全部本机归档，返回删除数量。
+func (ar *smsArchive) removeSender(sender string) int {
+	ar.mu.Lock()
+	defer ar.mu.Unlock()
 	filtered := ar.items[:0]
-	changed := false
+	deleted := 0
 	for _, it := range ar.items {
-		if it.Sender == sender && it.Content == content && it.Timestamp.Sub(ts) < time.Minute {
-			changed = true
+		if smsSenderMatches(it.Sender, sender) {
+			deleted++
 			continue
 		}
 		filtered = append(filtered, it)
 	}
-	if changed {
+	if deleted > 0 {
 		ar.items = filtered
 		ar.save()
 	}
+	return deleted
 }
 
 func (ar *smsArchive) clear() {
@@ -1393,6 +1423,9 @@ func (a *app) allSMS() []receivedSMS {
 	sort.SliceStable(merged, func(i, j int) bool {
 		return merged[i].Timestamp.After(merged[j].Timestamp)
 	})
+	for i := range merged {
+		merged[i].ID = smsStableID(merged[i])
+	}
 	return merged
 }
 
@@ -1429,6 +1462,7 @@ func (a *app) refreshSMS(w http.ResponseWriter, _ *http.Request) {
 // 模块短信按存储+索引删除；发送记录等无模块索引的短信（index<=0）仅从内存缓存删除。
 func (a *app) deleteSMS(w http.ResponseWriter, r *http.Request) {
 	var body struct {
+		ID        string    `json:"id"`
 		Storage   string    `json:"storage"`
 		Index     int       `json:"index"`
 		Sender    string    `json:"sender"`
@@ -1439,25 +1473,32 @@ func (a *app) deleteSMS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Index <= 0 {
-		if strings.TrimSpace(body.Sender) == "" && strings.TrimSpace(body.Content) == "" {
+		body.ID = strings.TrimSpace(body.ID)
+		if body.ID == "" && strings.TrimSpace(body.Sender) == "" && strings.TrimSpace(body.Content) == "" {
 			writeError(w, http.StatusBadRequest, "index is required")
 			return
 		}
-		a.smsMu.Lock()
-		filtered := a.sms[:0]
-		for _, item := range a.sms {
-			if item.Sender == body.Sender && item.Content == body.Content &&
-				!body.Timestamp.IsZero() && item.Timestamp.Sub(body.Timestamp) < time.Minute {
-				continue
+		// 新客户端直接提交后端生成的稳定 ID；旧客户端先在合并视图中
+		// 确定唯一逻辑目标，再用同一 ID 清理它的重复表示。
+		if body.ID == "" {
+			items := a.allSMS()
+			if index := closestSMSMatchIndex(items, body.Sender, body.Content, body.Timestamp); index >= 0 {
+				body.ID = smsStableID(items[index])
 			}
-			filtered = append(filtered, item)
 		}
-		a.sms = filtered
+		if body.ID == "" {
+			writeJSON(w, http.StatusOK, map[string]bool{"deleted": false})
+			return
+		}
+		a.smsMu.Lock()
+		var memoryDeleted int
+		a.sms, memoryDeleted = removeSMSByID(a.sms, body.ID)
 		a.smsMu.Unlock()
+		archiveDeleted := 0
 		if a.smsArchive != nil {
-			a.smsArchive.remove(body.Sender, body.Content, body.Timestamp)
+			archiveDeleted = a.smsArchive.removeID(body.ID)
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+		writeJSON(w, http.StatusOK, map[string]bool{"deleted": memoryDeleted+archiveDeleted > 0})
 		return
 	}
 	memory := strings.ToUpper(strings.TrimSpace(body.Storage))
@@ -1493,6 +1534,145 @@ func (a *app) deleteSMS(w http.ResponseWriter, r *http.Request) {
 	a.sms = filtered
 	a.smsMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
+// POST /api/sms/delete-sender：按对方号码删除完整会话。
+// 模块短信先逐条通过 AT 删除，全部成功后再同步清理内存缓存与本机归档。
+func (a *app) deleteSMSSender(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Sender string `json:"sender"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	body.Sender = strings.TrimSpace(body.Sender)
+	if body.Sender == "" {
+		writeError(w, http.StatusBadRequest, "sender is required")
+		return
+	}
+
+	allMatches := 0
+	for _, item := range a.allSMS() {
+		if smsSenderMatches(item.Sender, body.Sender) {
+			allMatches++
+		}
+	}
+
+	a.smsMu.RLock()
+	memoryItems := append([]receivedSMS(nil), a.sms...)
+	a.smsMu.RUnlock()
+	indicesByMemory := make(map[string]map[int]struct{})
+	for _, item := range memoryItems {
+		if !smsSenderMatches(item.Sender, body.Sender) || item.ModuleIndex <= 0 || item.Archived {
+			continue
+		}
+		memory := strings.ToUpper(strings.TrimSpace(item.ModuleStorage))
+		if memory == "" {
+			memory = "ME"
+		}
+		if indicesByMemory[memory] == nil {
+			indicesByMemory[memory] = make(map[int]struct{})
+		}
+		indicesByMemory[memory][item.ModuleIndex] = struct{}{}
+	}
+
+	if len(indicesByMemory) > 0 {
+		if a.modem != nil {
+			writeError(w, http.StatusServiceUnavailable, "module SMS deletion is only available through USB AT")
+			return
+		}
+		if err := a.ensureUSBAT(); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "AT serial port is unavailable: "+err.Error())
+			return
+		}
+		memories := make([]string, 0, len(indicesByMemory))
+		for memory := range indicesByMemory {
+			memories = append(memories, memory)
+		}
+		sort.Strings(memories)
+		for _, memory := range memories {
+			if _, err := a.usbAT.Command(fmt.Sprintf(`AT+CPMS="%s","%s","%s"`, memory, memory, memory), 5*time.Second); err != nil {
+				writeError(w, http.StatusBadGateway, "select storage: "+err.Error())
+				return
+			}
+			indices := make([]int, 0, len(indicesByMemory[memory]))
+			for index := range indicesByMemory[memory] {
+				indices = append(indices, index)
+			}
+			sort.Sort(sort.Reverse(sort.IntSlice(indices)))
+			for _, index := range indices {
+				if _, err := a.usbAT.Command(fmt.Sprintf("AT+CMGD=%d", index), 10*time.Second); err != nil {
+					writeError(w, http.StatusBadGateway, fmt.Sprintf("delete %s index %d: %v", memory, index, err))
+					return
+				}
+			}
+		}
+	}
+
+	a.smsMu.Lock()
+	filtered := a.sms[:0]
+	for _, item := range a.sms {
+		if smsSenderMatches(item.Sender, body.Sender) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	a.sms = filtered
+	a.smsMu.Unlock()
+	if a.smsArchive != nil {
+		a.smsArchive.removeSender(body.Sender)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted":       allMatches > 0,
+		"deleted_count": allMatches,
+	})
+}
+
+func smsSenderMatches(value, target string) bool {
+	return strings.TrimSpace(value) == strings.TrimSpace(target)
+}
+
+// closestSMSMatchIndex returns the single nearest timestamp match. Swift's
+// ISO-8601 encoder may discard sub-second precision, so a two-second tolerance
+// is sufficient without risking a nearby, unrelated message.
+func closestSMSMatchIndex(items []receivedSMS, sender, content string, timestamp time.Time) int {
+	if timestamp.IsZero() {
+		return -1
+	}
+	bestIndex := -1
+	bestDelta := 2 * time.Second
+	for index, item := range items {
+		if item.Sender != sender || item.Content != content {
+			continue
+		}
+		delta := item.Timestamp.Sub(timestamp)
+		if delta < 0 {
+			delta = -delta
+		}
+		if delta < bestDelta {
+			bestIndex = index
+			bestDelta = delta
+		}
+	}
+	return bestIndex
+}
+
+func removeSMSByID(items []receivedSMS, id string) ([]receivedSMS, int) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return items, 0
+	}
+	filtered := items[:0]
+	deleted := 0
+	for _, item := range items {
+		if smsStableID(item) == id {
+			deleted++
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered, deleted
 }
 
 // GET /api/sms/adopt：查询接管模式状态

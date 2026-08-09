@@ -8,6 +8,7 @@ import ServiceManagement
 enum AutoLaunch {
     static let launchAgentLabel = "com.djonehub.native"
     static let launchAgentPath = NSHomeDirectory() + "/Library/LaunchAgents/" + launchAgentLabel + ".plist"
+    static let didChangeNotification = Notification.Name("autoLaunchDidChange")
 
     /// 当前是否已启用自启
     static var isEnabled: Bool {
@@ -23,6 +24,7 @@ enum AutoLaunch {
         } else {
             try disable()
         }
+        NotificationCenter.default.post(name: didChangeNotification, object: nil)
     }
 
     private static func enable() throws {
