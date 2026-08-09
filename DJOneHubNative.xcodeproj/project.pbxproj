@@ -34,6 +34,8 @@
 		E0A176B7AED47B544F0DED92 /* Ringtones in Resources */ = {isa = PBXBuildFile; fileRef = 34932915608A3DAB57EDF189 /* Ringtones */; };
 		E7EBC99E07FAFF36998EB28F /* UnixSocketURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F658F8040ABB05665E2861A /* UnixSocketURLProtocol.swift */; };
 		E9BF9071087C70A15FDCE7FF /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5511AFD27D1673297909199E /* APIClient.swift */; };
+		E51A00000000000000000001 /* ESIMStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E51A00000000000000000002 /* ESIMStore.swift */; };
+		E51A00000000000000000003 /* ESIMQRCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = E51A00000000000000000004 /* ESIMQRCode.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -60,6 +62,8 @@
 		DB45AD6AB93DBA1F357E5695 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		DC11388FA67B835A55D6B961 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		E6A07D7E5C03CF4CC05E28A3 /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
+		E51A00000000000000000002 /* ESIMStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ESIMStore.swift; sourceTree = "<group>"; };
+		E51A00000000000000000004 /* ESIMQRCode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ESIMQRCode.swift; sourceTree = "<group>"; };
 		EF323F316D84B16D3F424AA1 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		F2E57514CD06B3BE5E853F33 /* IncomingCallCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingCallCard.swift; sourceTree = "<group>"; };
 		FB2AA62D9556A49059333C15 /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
@@ -105,6 +109,8 @@
 				C425E69F6A5C567C97D76733 /* BackendProcess.swift */,
 				5E66119EDEC7816A5F417986 /* DashboardStore.swift */,
 				52CB97D70CF5A0A3680E4366 /* DJOneHubNativeApp.swift */,
+				E51A00000000000000000004 /* ESIMQRCode.swift */,
+				E51A00000000000000000002 /* ESIMStore.swift */,
 				F2E57514CD06B3BE5E853F33 /* IncomingCallCard.swift */,
 				C84FC7D3D21A21CC374D0541 /* Models.swift */,
 				7B63FD8D7D1B1D51D06D23BD /* Ringtone.swift */,
@@ -271,6 +277,8 @@
 				C65DAD302F467303D58CE553 /* DashboardStore.swift in Sources */,
 				110A8BB4EA687024D52935B3 /* DiagnosticsView.swift in Sources */,
 				60159F5217ABF610D1D9B6B9 /* ESIMView.swift in Sources */,
+				E51A00000000000000000003 /* ESIMQRCode.swift in Sources */,
+				E51A00000000000000000001 /* ESIMStore.swift in Sources */,
 				C54A1D5773A5E4D223CB08B0 /* HomeView.swift in Sources */,
 				19688E1CE9B8EC8D2F96AC37 /* IncomingCallCard.swift in Sources */,
 				C856F18A2C9A8B48080E46E6 /* Models.swift in Sources */,

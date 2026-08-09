@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>用于扫描运营商提供的 eSIM 二维码，画面仅在本机处理。</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>非官方项目，仅限非商业用途</string>
 </dict>

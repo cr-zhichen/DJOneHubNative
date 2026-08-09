@@ -447,13 +447,54 @@ struct EUICCInfo: Decodable {
     let firmware: String?
     let manufacturer: String?
     let sasAccreditationNumber: String?
+    let specGuess: String?
+    let specConfidence: String?
+    let infoSource: String?
+    let infoVersion: String?
+    let infoError: String?
+    let defaultSMDPAddress: String?
+    let rootDSAddress: String?
 
     enum CodingKeys: String, CodingKey {
         case aid, eid, spec, firmware, manufacturer
         case freeNvram = "free_nvram"
         case freeNvramBytes = "free_nvram_bytes"
         case sasAccreditationNumber = "sas_accreditation_number"
+        case specGuess = "spec_guess"
+        case specConfidence = "spec_confidence"
+        case infoSource = "info_source"
+        case infoVersion = "info_version"
+        case infoError = "info_error"
+        case defaultSMDPAddress = "default_smdp_address"
+        case rootDSAddress = "root_ds_address"
     }
+}
+
+struct CardIdentity: Decodable {
+    let brand: String?
+    let model: String?
+    let hardwareRevision: String?
+    let source: String?
+    let confidence: String?
+    let ruleID: String?
+    let sourceURL: String?
+    let sourceVersion: String?
+    let evidence: [CardIdentityEvidence]?
+
+    enum CodingKeys: String, CodingKey {
+        case brand, model, source, confidence, evidence
+        case hardwareRevision = "hardware_revision"
+        case ruleID = "rule_id"
+        case sourceURL = "source_url"
+        case sourceVersion = "source_version"
+    }
+}
+
+struct CardIdentityEvidence: Decodable {
+    let kind: String
+    let name: String
+    let url: String
+    let version: String
 }
 
 struct ChipInfo: Decodable {
@@ -461,12 +502,13 @@ struct ChipInfo: Decodable {
     let skuName: String?
     let serialNumber: String?
     let firmware: String?
+    let identity: CardIdentity?
 
     enum CodingKeys: String, CodingKey {
         case eids
         case skuName = "sku_name"
         case serialNumber = "serial_number"
-        case firmware
+        case firmware, identity
     }
 }
 
@@ -480,6 +522,15 @@ struct ProfileItem: Decodable, Identifiable {
 
     var id: String { iccid }
     var isEnabled: Bool { state == 1 }
+    var displayName: String {
+        if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
+        if let provider = serviceProviderName?.trimmingCharacters(in: .whitespacesAndNewlines), !provider.isEmpty {
+            return provider
+        }
+        return iccid.isEmpty ? "Profile" : "Profile · …\(iccid.suffix(6))"
+    }
 
     enum CodingKeys: String, CodingKey {
         case iccid, name, state
@@ -492,12 +543,36 @@ struct ProfileItem: Decodable, Identifiable {
 struct EUICCProfiles: Decodable {
     let eid: String?
     let aidHex: String?
+    let readState: String?
+    let readError: String?
     let profiles: [ProfileItem]?
 
     enum CodingKeys: String, CodingKey {
         case eid
         case aidHex = "aid_hex"
+        case readState = "read_state"
+        case readError = "read_error"
         case profiles
+    }
+}
+
+struct ESIMCapabilities: Decodable {
+    let canRefresh: Bool
+    let canDownload: Bool
+    let canSwitch: Bool
+    let canRename: Bool
+    let canDelete: Bool
+    let canProbePhonebook: Bool
+    let vendorSerialAvailable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case canRefresh = "can_refresh"
+        case canDownload = "can_download"
+        case canSwitch = "can_switch"
+        case canRename = "can_rename"
+        case canDelete = "can_delete"
+        case canProbePhonebook = "can_probe_phonebook"
+        case vendorSerialAvailable = "vendor_serial_available"
     }
 }
 
@@ -507,12 +582,16 @@ struct ESIMOverview: Decodable {
     let message: String?
     let chipInfo: ChipInfo?
     let profiles: [EUICCProfiles]?
+    let capabilities: ESIMCapabilities?
+    let updatedAt: Date?
+    let operation: ESIMOperationSnapshot?
 
     enum CodingKeys: String, CodingKey {
-        case message
+        case message, capabilities, operation
         case cardType = "card_type"
         case chipInfo = "chip_info"
         case profiles
+        case updatedAt = "updated_at"
     }
 }
 
@@ -564,6 +643,7 @@ struct SaveModuleNoteRequest: Encodable {
 
 /// POST /api/esim/phonebook/probe
 struct PhonebookProbeResult: Decodable {
+    let storage: String?
     let storageSupported: Bool?
     let storageSelected: Bool?
     let readSupported: Bool?
@@ -572,7 +652,7 @@ struct PhonebookProbeResult: Decodable {
     let responses: [String: String]?
 
     enum CodingKeys: String, CodingKey {
-        case responses
+        case storage, responses
         case storageSupported = "storage_supported"
         case storageSelected = "storage_selected"
         case readSupported = "read_supported"
@@ -596,9 +676,10 @@ struct ESIMSwitchResult: Decodable {
     let moduleRebootResponse: String?
     let moduleRebootWarning: String?
     let reconnectWaitSeconds: Int?
+    let operation: ESIMOperationSnapshot?
 
     enum CodingKeys: String, CodingKey {
-        case phase
+        case phase, operation
         case switchAccepted = "switch_accepted"
         case targetIccid = "target_iccid"
         case recoveryPending = "recovery_pending"
@@ -622,7 +703,7 @@ struct ESIMDeleteRequest: Encodable {
     let aid: String?
 }
 
-/// 删除/下载 Profile 的结果（Go 端无 json tag，键名首字母大写；SpaceDelta 可为 null）
+/// 删除/下载 Profile 的结果。
 struct SpaceDelta: Decodable {
     let direction: String?
     let bytes: Int?
@@ -634,10 +715,59 @@ struct ESIMProfileResult: Decodable {
     let spaceDelta: SpaceDelta?
 
     enum CodingKeys: String, CodingKey {
-        case warning = "Warning"
-        case warningCode = "WarningCode"
-        case spaceDelta = "SpaceDelta"
+        case warning
+        case warningCode = "warning_code"
+        case spaceDelta = "space_delta"
     }
+}
+
+struct ESIMOperationResult: Decodable {
+    let warning: String?
+    let warningCode: String?
+    let spaceDelta: SpaceDelta?
+
+    enum CodingKeys: String, CodingKey {
+        case warning
+        case warningCode = "warning_code"
+        case spaceDelta = "space_delta"
+    }
+}
+
+struct ESIMOperationSnapshot: Decodable, Identifiable {
+    let id: String
+    let kind: String
+    let state: String
+    let step: String?
+    let message: String?
+    let progress: Int
+    let targetICCID: String?
+    let errorCode: String?
+    let error: String?
+    let recoverable: Bool?
+    let refreshAfterSeconds: Int?
+    let result: ESIMOperationResult?
+    let startedAt: Date
+    let updatedAt: Date
+    let finishedAt: Date?
+
+    var isActive: Bool { state == "queued" || state == "running" }
+    var isSuccessful: Bool { state == "succeeded" }
+    var hasWarning: Bool { state == "warning" }
+    var isFailed: Bool { state == "failed" }
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, state, step, message, progress, error, recoverable, result
+        case targetICCID = "target_iccid"
+        case errorCode = "error_code"
+        case refreshAfterSeconds = "refresh_after_seconds"
+        case startedAt = "started_at"
+        case updatedAt = "updated_at"
+        case finishedAt = "finished_at"
+    }
+}
+
+struct ESIMOperationResponse: Decodable {
+    let operation: ESIMOperationSnapshot?
 }
 
 /// POST /api/esim/download
@@ -659,6 +789,7 @@ struct ESIMDownloadRequest: Encodable {
 struct ESIMHealth: Decodable {
     let ok: Bool?
     let cardType: String?
+    let state: String?
     let message: String?
     let activeProfile: ProfileItem?
     let moduleIccid: String?
@@ -668,14 +799,17 @@ struct ESIMHealth: Decodable {
     let registered: Bool?
     let signalDbm: Int?
     let networkMode: String?
+    let profileMatchesModule: Bool?
+    let operation: ESIMOperationSnapshot?
 
     enum CodingKeys: String, CodingKey {
-        case ok, message, registration, registered, imsi
+        case ok, state, message, registration, registered, imsi, operation
         case cardType = "card_type"
         case activeProfile = "active_profile"
         case moduleIccid = "module_iccid"
         case operatorName = "operator"
         case signalDbm = "signal_dbm"
         case networkMode = "network_mode"
+        case profileMatchesModule = "profile_matches_module"
     }
 }
