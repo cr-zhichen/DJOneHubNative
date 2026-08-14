@@ -19,6 +19,7 @@ final class IncomingCallCard {
 
     /// 卡片上显示的号码
     var number: String = "未知号码"
+    var answerAvailable = false
 
     private init() {}
 
@@ -28,6 +29,7 @@ final class IncomingCallCard {
         self.store = store
         self.preview = preview
         self.number = store?.callStatus.number ?? "+8613800000000"
+        self.answerAvailable = store?.callModeStatus?.isReady == true
         // 注销上一次的自动收起任务（手动关闭后再触发时不会提前收起）
         previewHideTask?.cancel()
         previewHideTask = nil
@@ -87,6 +89,17 @@ final class IncomingCallCard {
             store.hangup()
         }
         hide()
+    }
+
+    /// 接听后拉起通话页，让用户立即看到模块音频建立状态。
+    func answer() {
+        guard let store, !preview else {
+            openDetail()
+            return
+        }
+        store.answerCall()
+        store.showCallDetail = true
+        openDetail()
     }
 
     /// 点击卡片/查看详情：拉起主窗口并弹出通话详情（预览模式也走同一路径）
@@ -194,6 +207,16 @@ struct IncomingCallCardContent: View {
                 .buttonStyle(RedActionButtonStyle())
 
                 Spacer()
+
+                Button {
+                    card.answer()
+                } label: {
+                    Label("接听", systemImage: "phone.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                .disabled(!card.answerAvailable)
+                .help(card.answerAvailable ? "接听来电" : "请先在通话页完成通话模式准备")
 
                 Button("查看详情") {
                     card.openDetail()

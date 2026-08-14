@@ -471,3 +471,38 @@ func TestManagerExecuteATReturnsResponseWhenRunning(t *testing.T) {
 		t.Fatalf("ExecuteAT() resp = %q, want %q", resp, "OK")
 	}
 }
+
+func TestManagerExecuteATSensitiveUsesRedactedLogCommandAndClearsPool(t *testing.T) {
+	m, err := New(config.DeviceConfig{
+		ID:            "dev-at-sensitive",
+		DeviceBackend: "at",
+		ATPort:        "/dev/ttyUSB6",
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	m.running = true
+	m.healthy = true
+
+	secretCommand := `AT+QADBKEY="secret-value"`
+	redactedCommand := `AT+QADBKEY="<redacted>"`
+	checked := make(chan struct{})
+	go func() {
+		req := <-m.cmdChan
+		if req.cmd != secretCommand || req.logCmd != redactedCommand || !req.silent {
+			t.Errorf("sensitive request = %#v", req)
+		}
+		close(checked)
+		req.respChan <- ""
+	}()
+
+	if _, err := m.ExecuteATSensitive(secretCommand, redactedCommand, time.Second); err != nil {
+		t.Fatalf("ExecuteATSensitive() error = %v", err)
+	}
+	<-checked
+	pooled := m.reqPool.Get().(*commandRequest)
+	if pooled.cmd != "" || pooled.logCmd != "" || pooled.followUp != "" {
+		t.Fatalf("sensitive request retained in pool: %#v", pooled)
+	}
+	m.reqPool.Put(pooled)
+}

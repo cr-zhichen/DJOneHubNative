@@ -37,6 +37,7 @@ type rxMsg struct {
 // commandRequest AT 命令请求结构
 type commandRequest struct {
 	cmd          string
+	logCmd       string
 	respChan     chan string
 	errChan      chan error
 	timeout      time.Duration
@@ -631,11 +632,19 @@ func (m *Manager) runLoop() {
 // handleCommand 处理单个 AT 命令
 func (m *Manager) handleCommand(req commandRequest) {
 	startTime := time.Now()
+	logCmd := req.logCmd
+	if logCmd == "" {
+		logCmd = req.cmd
+	}
 
 	// 发送命令
-	if _, err := m.port.Write([]byte(req.cmd + "\r\n")); err != nil {
-		req.errChan <- err
-		m.handleFatalSerialRuntimeErr(err, "write", req.cmd)
+	_, writeErr := m.port.Write([]byte(req.cmd + "\r\n"))
+	// The raw command is no longer needed after the write. Sensitive requests
+	// retain only their redacted log label while the modem response is pending.
+	req.cmd = ""
+	if writeErr != nil {
+		req.errChan <- writeErr
+		m.handleFatalSerialRuntimeErr(writeErr, "write", logCmd)
 		return
 	}
 
@@ -650,17 +659,17 @@ RespLoop:
 		case <-timeoutTimer.C:
 			// 超时时尝试发送 ESC (0x1B) 以取消可能的挂起操作（如短信输入）
 			m.port.Write([]byte{0x1B})
-			logger.Warn(fmt.Sprintf("[%s] 命令执行超时，已发送 ESC 尝试恢复", m.cfg.ID), "port", m.atPort, "cmd", req.cmd, "cost", time.Since(startTime).String())
+			logger.Warn(fmt.Sprintf("[%s] 命令执行超时，已发送 ESC 尝试恢复", m.cfg.ID), "port", m.atPort, "cmd", logCmd, "cost", time.Since(startTime).String())
 			req.errChan <- errors.New("命令执行超时")
 			if failures, tripped := m.recordATTimeout(req); tripped {
-				m.tripATTimeoutWatchdog(req.cmd, failures)
+				m.tripATTimeoutWatchdog(logCmd, failures)
 			}
 			return
 
 		case msg := <-m.rxChan:
 			if msg.Err != nil {
 				req.errChan <- msg.Err
-				m.handleFatalSerialRuntimeErr(msg.Err, "read", req.cmd)
+				m.handleFatalSerialRuntimeErr(msg.Err, "read", logCmd)
 				return
 			}
 
@@ -670,7 +679,7 @@ RespLoop:
 				m.resetATTimeoutWatchdog()
 				if !req.silent {
 					logger.Debug(fmt.Sprintf("[%s] AT 执行成功", m.cfg.ID),
-						"cmd", req.cmd,
+						"cmd", logCmd,
 						"resp", strings.Join(fullResponse, " | "),
 						"cost", time.Since(startTime).Truncate(time.Millisecond).String())
 				}
@@ -681,7 +690,7 @@ RespLoop:
 				fullResponse = append(fullResponse, line)
 				if !req.silent {
 					logger.Warn(fmt.Sprintf("[%s] AT 执行失败", m.cfg.ID),
-						"cmd", req.cmd,
+						"cmd", logCmd,
 						"resp", strings.Join(fullResponse, " | "),
 						"cost", time.Since(startTime).Truncate(time.Millisecond).String())
 				}
@@ -692,7 +701,7 @@ RespLoop:
 				fullResponse = append(fullResponse, line)
 				if !req.silent {
 					logger.Debug(fmt.Sprintf("[%s] AT 收到提示", m.cfg.ID),
-						"cmd", req.cmd,
+						"cmd", logCmd,
 						"resp", ">",
 						"cost", time.Since(startTime).Truncate(time.Millisecond).String())
 				}
@@ -1683,21 +1692,31 @@ func (m *Manager) decodePDU(raw string) (sender, content string, timestamp time.
 
 // ExecuteAT 执行 AT 命令 (普通优先级)
 func (m *Manager) ExecuteAT(cmd string, timeout time.Duration) (string, error) {
-	return m.executeAT(cmd, timeout, false, false)
+	return m.executeAT(cmd, "", timeout, false, false)
 }
 
 // ExecuteATSilent 静默执行 AT 命令 (普通优先级)
 func (m *Manager) ExecuteATSilent(cmd string, timeout time.Duration) (string, error) {
-	return m.executeAT(cmd, timeout, true, false)
+	return m.executeAT(cmd, "", timeout, true, false)
 }
 
 // ExecuteATHigh 执行 AT 命令 (高优先级)
 func (m *Manager) ExecuteATHigh(cmd string, timeout time.Duration) (string, error) {
-	return m.executeAT(cmd, timeout, false, true)
+	return m.executeAT(cmd, "", timeout, false, true)
+}
+
+// ExecuteATSensitive suppresses ordinary command logs and uses logCmd for the
+// remaining timeout/recovery diagnostics. The caller must provide a redacted
+// description that contains no credentials.
+func (m *Manager) ExecuteATSensitive(cmd, logCmd string, timeout time.Duration) (string, error) {
+	if strings.TrimSpace(logCmd) == "" {
+		logCmd = "AT+<redacted>"
+	}
+	return m.executeAT(cmd, logCmd, timeout, true, false)
 }
 
 // executeAT 内部通用的 AT 命令执行逻辑
-func (m *Manager) executeAT(cmd string, timeout time.Duration, silent, highPriority bool) (string, error) {
+func (m *Manager) executeAT(cmd, logCmd string, timeout time.Duration, silent, highPriority bool) (string, error) {
 	if !m.HasATPort() {
 		return "", errors.New("当前设备没有可用 AT 端口")
 	}
@@ -1712,6 +1731,7 @@ func (m *Manager) executeAT(cmd string, timeout time.Duration, silent, highPrior
 	req := m.reqPool.Get().(*commandRequest)
 	// 重置字段
 	req.cmd = cmd
+	req.logCmd = logCmd
 	req.timeout = timeout
 	req.silent = silent
 	req.highPriority = highPriority
@@ -1730,6 +1750,9 @@ func (m *Manager) executeAT(cmd string, timeout time.Duration, silent, highPrior
 		case <-req.errChan:
 		default:
 		}
+		req.cmd = ""
+		req.logCmd = ""
+		req.followUp = ""
 		m.reqPool.Put(req)
 	}()
 

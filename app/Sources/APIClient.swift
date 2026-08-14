@@ -42,6 +42,15 @@ struct APIClient {
         return try decoder.decode(T.self, from: data)
     }
 
+    func getData(_ path: String) async throws -> Data {
+        let url = Self.makeURL(path)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response, data: data)
+        return data
+    }
+
     func send<T: Decodable>(
         _ path: String,
         method: String = "POST",

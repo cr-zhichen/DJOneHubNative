@@ -5,7 +5,6 @@ struct HomeView: View {
     @EnvironmentObject private var backend: BackendProcess
     @EnvironmentObject private var store: DashboardStore
     @EnvironmentObject private var smsStore: SMSStore
-    @EnvironmentObject private var attentionStore: AttentionStore
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var showingRebootConfirm = false
@@ -17,7 +16,6 @@ struct HomeView: View {
     @AppStorage(MenuBarDisplayOptions.showSignalKey) private var menuBarShowSignal = false
     @AppStorage(MenuBarDisplayOptions.showDownloadKey) private var menuBarShowDownload = false
     @AppStorage(MenuBarDisplayOptions.showUploadKey) private var menuBarShowUpload = false
-    @StateObject private var ringtonePreview = RingtonePreview()
 
     private var status: DeviceStatus? { store.status }
     private var health: HealthStatus? { store.health }
@@ -28,7 +26,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 12) {
                 switch backend.state {
                 case .running:
-                    if let status {
+                    if status != nil {
                         overviewBar
                         deviceCard
                         WaterfallLayout(minColumnWidth: 320, spacing: 12) {
@@ -36,7 +34,6 @@ struct HomeView: View {
                             launchOptionsCard
                             smsCard
                             priorityCard
-                            voiceCard
                         }
                     } else if store.statusStale {
                         VStack(spacing: 10) {
@@ -473,104 +470,6 @@ struct HomeView: View {
         store.toast = ToastItem(message: enabled ? "已开启静默启动，下次启动不显示主窗口" : "已关闭静默启动", isSuccess: true)
     }
 
-    // MARK: - 语音通话
-
-    private var voiceCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // 标题行：状态徽标 + 通话操作
-            HStack(spacing: 10) {
-                Text("语音通话").font(.callout.bold())
-                Spacer()
-                statusBadge
-                if !store.callStatus.isIdle && store.callStatus.state != "unknown" {
-                    Button("查看详情") {
-                        store.showCallDetail = true
-                    }
-                    .controlSize(.small)
-                    Button("挂断", role: .destructive) {
-                        store.hangup()
-                    }
-                    .controlSize(.small)
-                }
-            }
-
-            // 启用语音
-            switchRow("启用语音", isOn: Binding(
-                get: { store.voiceEnabled },
-                set: { store.setVoiceEnabled($0) }
-            ))
-
-            // 来电铃声选择 + 试听
-            HStack(spacing: 8) {
-                Text("来电铃声").font(.callout)
-                Spacer()
-                Picker("", selection: Binding(
-                    get: { Ringtones.selectedID() },
-                    set: {
-                        ringtonePreview.stop()
-                        Ringtones.setSelected($0)
-                    }
-                )) {
-                    ForEach(Ringtones.all) { ringtone in
-                        Text(ringtone.displayName).tag(ringtone.id)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .controlSize(.small)
-                Button {
-                    ringtonePreview.toggle()
-                } label: {
-                    Image(systemName: ringtonePreview.isPlaying ? "stop.circle.fill" : "play.circle.fill")
-                        .font(.title3)
-                }
-                .buttonStyle(.plain)
-                .disabled(Ringtones.selectedID() == Ringtones.silentID)
-                .help(ringtonePreview.isPlaying ? "停止试听" : (Ringtones.selectedID() == Ringtones.silentID ? "已选择静音，无铃声可试听" : "试听当前铃声"))
-            }
-
-            // 通话中的动态信息
-            if let number = store.callStatus.number, !number.isEmpty {
-                infoRow("号码", number)
-            }
-            if let incomingAt = store.incomingAt {
-                infoRow("来电时间", incomingAt.formatted(date: .omitted, time: .standard))
-            }
-            if let error = store.voiceError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            // 通话记录（单独一行）
-            Button {
-                store.showCallHistory = true
-            } label: {
-                HStack(spacing: 6) {
-                    Label("通话记录（\(store.callHistory.count)）", systemImage: "clock.arrow.circlepath")
-                    if attentionStore.unviewedCallCount > 0 {
-                        AttentionBadge(
-                            count: attentionStore.unviewedCallCount,
-                            accessibilityName: "未查看电话")
-                    }
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            Text("当前模块固件不支持通话音频传输，仅支持来电与通话状态查看。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
-        .sheet(isPresented: $store.showCallHistory) {
-            CallHistoryView()
-        }
-    }
-
     // MARK: - 启动选项
 
     private var launchOptionsCard: some View {
@@ -624,44 +523,6 @@ struct HomeView: View {
     private func notifyMenuBarDisplayOptionsChanged() {
         NotificationCenter.default.post(
             name: MenuBarDisplayOptions.didChangeNotification, object: nil)
-    }
-
-    /// 标签左对齐、值可复制的信息行
-    private func infoRow(_ title: String, _ value: String) -> some View {
-        HStack(spacing: 10) {
-            Text(title).foregroundStyle(.secondary).frame(width: 56, alignment: .leading)
-            Text(value).textSelection(.enabled)
-            Spacer()
-        }
-        .font(.callout)
-    }
-
-    private var statusBadge: some View {
-        Text(callStatusText)
-            .font(.caption.bold())
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Capsule().fill(statusDotColor.opacity(0.15)))
-            .foregroundStyle(statusDotColor)
-    }
-
-    private var statusDotColor: Color {
-        switch store.callStatus.state {
-        case "active": return .green
-        case "incoming": return .red
-        case "dialing", "alerting": return .orange
-        default: return .gray
-        }
-    }
-
-    private var callStatusText: String {
-        switch store.callStatus.state {
-        case "active": return "通话中"
-        case "incoming": return "来电"
-        case "dialing": return "拨号中"
-        case "alerting": return "呼叫中"
-        case "unknown": return "状态未知"
-        default: return "空闲"
-        }
     }
 
     // MARK: - 组件
@@ -791,11 +652,36 @@ struct CallDetailView: View {
             }
 
             Divider()
-            Text("当前模块固件不支持通话音频传输，仅支持来电与通话状态查看。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Image(systemName: store.audioRunning ? "waveform.circle.fill" : "waveform.circle")
+                    .foregroundStyle(store.audioRunning ? Color.green : Color.secondary)
+                Text(store.audioRunning ? "Mac 与模块音频已连接" : "接通后将自动建立通话音频")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
-            HStack {
+            if let error = store.voiceError ?? store.audioError {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .accessibilityHidden(true)
+                    Text(error)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                }
+                .accessibilityElement(children: .combine)
+            }
+
+            HStack(spacing: 10) {
+                if store.callStatus.isIncoming {
+                    Button("接听") {
+                        store.answerCall()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .disabled(store.callModeStatus?.isReady != true)
+                    .help(store.callModeStatus?.isReady == true ? "接听来电" : "请先在通话页完成通话模式准备")
+                }
                 if !store.callStatus.isIdle && store.callStatus.state != "unknown" {
                     Button("挂断", role: .destructive) {
                         store.hangup()

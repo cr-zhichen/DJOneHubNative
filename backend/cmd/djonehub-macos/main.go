@@ -111,6 +111,17 @@ type app struct {
 	// 语音功能（USB 音频）开关
 	voiceEnabled bool
 
+	// 通话模式：USB 初始化、运行时下载与模块侧语音路由状态。
+	callModeMu        sync.RWMutex
+	callModeRefreshMu sync.Mutex
+	callMode          callModeStatus
+	callModeOperation bool
+
+	moduleVoiceMu       sync.Mutex
+	voiceUSBTransition  sync.RWMutex
+	moduleVoicePrepared bool
+	moduleVoiceRoute    bool
+
 	// 来电事件缓存（URC 驱动），供通话状态查询在 CLCC 失败/无条目时兜底
 	callMu          sync.Mutex
 	callURCIncoming bool
@@ -213,9 +224,18 @@ type networkCheckResult struct {
 func main() {
 	var port string
 	var listen string
+	var internalADBProbe bool
 	flag.StringVar(&port, "port", "", "AT serial port; auto-detected when omitted")
 	flag.StringVar(&listen, "listen", "unix:/tmp/djonehub.sock", "HTTP listen address (unix:/path or host:port)")
+	flag.BoolVar(&internalADBProbe, "internal-adb-probe", false, "run one isolated module ADB probe and exit")
 	flag.Parse()
+	if internalADBProbe {
+		if err := runInternalADBProbe(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if strings.TrimSpace(port) == "" {
 		var err error
@@ -386,6 +406,23 @@ func serve(instance *app, listen string) {
 		}
 	case <-ctx.Done():
 		log.Printf("DJOneHub is stopping")
+		instance.moduleVoiceMu.Lock()
+		voiceRouteActive := instance.moduleVoiceRoute
+		instance.moduleVoiceMu.Unlock()
+		if voiceRouteActive {
+			cleanupDone := make(chan struct{})
+			go func() {
+				if err := instance.stopModuleVoiceRoute(instance.runtimeDirectory()); err != nil {
+					log.Printf("stop module voice route during shutdown: %v", err)
+				}
+				close(cleanupDone)
+			}()
+			select {
+			case <-cleanupDone:
+			case <-time.After(4 * time.Second):
+				log.Printf("timed out stopping module voice route during shutdown")
+			}
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
@@ -750,6 +787,7 @@ func (a *app) markUSBATDetached(reason string) {
 	a.discoveryError = "DJI USB device is not connected"
 	a.usbATBackoffUntil = time.Now().Add(2 * time.Second)
 	a.usbATBackoffErr = reason
+	a.resetModuleVoiceState()
 	if manager, _ := a.currentESIMManager(); manager != nil {
 		manager.NotifyModemReset()
 	}
@@ -789,6 +827,15 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/call/dial", a.callDial)
 	mux.HandleFunc("POST /api/call/answer", a.callAnswer)
 	mux.HandleFunc("POST /api/call/hangup", a.callHangup)
+	mux.HandleFunc("GET /api/call-mode/status", a.callModeStatusAPI)
+	mux.HandleFunc("POST /api/call-mode/enable", a.callModeEnableAPI)
+	mux.HandleFunc("POST /api/call-mode/download", a.callModeDownloadAPI)
+	mux.HandleFunc("POST /api/call-mode/retry", a.callModeRetryAPI)
+	mux.HandleFunc("GET /api/call-mode/backups", a.callModeBackupsAPI)
+	mux.HandleFunc("GET /api/call-mode/backups/export", a.callModeBackupExportAPI)
+	mux.HandleFunc("POST /api/call-mode/restore", a.callModeRestoreAPI)
+	mux.HandleFunc("POST /api/call/audio/start", a.callAudioStartAPI)
+	mux.HandleFunc("POST /api/call/audio/stop", a.callAudioStopAPI)
 	mux.HandleFunc("GET /api/voice/enabled", a.getVoiceEnabled)
 	mux.HandleFunc("POST /api/voice/enable", a.setVoiceEnabled)
 	mux.HandleFunc("POST /api/network/usbnet", a.setUSBNetMode)
@@ -1379,6 +1426,8 @@ func (a *app) initSMSArchive() {
 	dir := filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "DJOneHubNative")
 	_ = os.MkdirAll(dir, 0o700)
 	a.dataDir = dir
+	a.callMode = newCallModeStatus("checking", "正在检查通话模式")
+	a.callMode.RuntimePath = a.runtimeDirectory()
 	a.smsArchive = newSMSArchive(filepath.Join(dir, "sms-archive.json"))
 	a.callLog = newCallLog(filepath.Join(dir, "call-log.json"))
 	a.routing = newRoutingManager(dir)
@@ -1762,20 +1811,56 @@ func (a *app) clearSMS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) runATCommand(command string, timeout time.Duration) (string, error) {
+	// Enabling/disabling the module UAC route can briefly re-enumerate the USB
+	// gadget. Hold ordinary AT traffic until that transition is verified so a
+	// polling request cannot misclassify the expected blip as physical removal.
+	a.voiceUSBTransition.RLock()
 	if a.modem == nil {
 		if err := a.ensureUSBAT(); err != nil {
+			a.voiceUSBTransition.RUnlock()
 			return "", err
 		}
 		if a.usbAT == nil {
+			a.voiceUSBTransition.RUnlock()
 			return "", errors.New("AT serial port is unavailable")
 		}
 		response, err := a.usbAT.Command(command, timeout)
+		a.voiceUSBTransition.RUnlock()
 		if err != nil {
 			a.resetUSBATIfGone(err)
 		}
 		return response, err
 	}
-	return a.modem.ExecuteAT(command, timeout)
+	response, err := a.modem.ExecuteAT(command, timeout)
+	a.voiceUSBTransition.RUnlock()
+	return response, err
+}
+
+// runSensitiveATCommand sends a credential-bearing AT command without ever
+// exposing the raw command to serial-manager logs. Direct USB AT does not log
+// commands; the serial manager receives only the caller-provided redacted name
+// for timeout and recovery diagnostics.
+func (a *app) runSensitiveATCommand(command, redacted string, timeout time.Duration) (string, error) {
+	a.voiceUSBTransition.RLock()
+	if a.modem == nil {
+		if err := a.ensureUSBAT(); err != nil {
+			a.voiceUSBTransition.RUnlock()
+			return "", err
+		}
+		if a.usbAT == nil {
+			a.voiceUSBTransition.RUnlock()
+			return "", errors.New("AT serial port is unavailable")
+		}
+		response, err := a.usbAT.Command(command, timeout)
+		a.voiceUSBTransition.RUnlock()
+		if err != nil {
+			a.resetUSBATIfGone(err)
+		}
+		return response, err
+	}
+	response, err := a.modem.ExecuteATSensitive(command, redacted, timeout)
+	a.voiceUSBTransition.RUnlock()
+	return response, err
 }
 
 func (a *app) sendSMS(w http.ResponseWriter, r *http.Request) {
@@ -2387,6 +2472,15 @@ func (a *app) callDial(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "number is required")
 		return
 	}
+	body.Number = strings.TrimSpace(body.Number)
+	if !validVoiceNumber(body.Number) {
+		writeError(w, http.StatusBadRequest, "电话号码只能包含数字、开头的 +、* 和 #，且最长 32 位")
+		return
+	}
+	if err := a.callModeReadyForCall(); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	// 分号结尾表示语音呼叫
 	response, err := a.runATCommand("ATD"+body.Number+";", 10*time.Second)
 	if err != nil {
@@ -2397,8 +2491,28 @@ func (a *app) callDial(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "response": response})
 }
 
+func validVoiceNumber(number string) bool {
+	if number == "" || len(number) > 32 {
+		return false
+	}
+	for index, value := range number {
+		if value >= '0' && value <= '9' || value == '*' || value == '#' {
+			continue
+		}
+		if value == '+' && index == 0 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // POST /api/call/answer
 func (a *app) callAnswer(w http.ResponseWriter, _ *http.Request) {
+	if err := a.callModeReadyForCall(); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	response, err := a.runATCommand("ATA", 10*time.Second)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -2417,7 +2531,17 @@ func (a *app) callHangup(w http.ResponseWriter, _ *http.Request) {
 	}
 	// ATH 后模块通常也会发 NO CARRIER，endCall 幂等不会重复记录
 	a.endCall()
-	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "response": response})
+	a.moduleVoiceMu.Lock()
+	voiceRouteActive := a.moduleVoiceRoute
+	a.moduleVoiceMu.Unlock()
+	warning := ""
+	if voiceRouteActive {
+		if stopErr := a.stopModuleVoiceRoute(a.runtimeDirectory()); stopErr != nil {
+			log.Printf("stop module voice route after hangup: %v", stopErr)
+			warning = "通话已挂断，但模块音频路由清理未完全确认：" + stopErr.Error()
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "response": response, "warning": warning})
 }
 
 // parseUACFromUSBCFG 从 AT+QCFG="usbcfg"? 响应解析 UAC（USB 音频）参数，返回 (值, 是否解析成功)
@@ -2464,22 +2588,8 @@ func (a *app) setVoiceEnabled(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	uac := 0
-	if body.Enabled {
-		uac = 1
-	}
-	cmd := fmt.Sprintf(`AT+QCFG="usbcfg",0x2CA3,0x4006,1,1,1,1,1,0,%d`, uac)
-	if _, err := a.runATCommand(cmd, 8*time.Second); err != nil {
-		writeError(w, http.StatusBadGateway, "切换 USB 音频失败："+err.Error())
-		return
-	}
-	if _, err := a.runATCommand("AT+CFUN=1,1", 5*time.Second); err != nil {
-		writeError(w, http.StatusBadGateway, "模块重启失败："+err.Error())
-		return
-	}
-	a.voiceEnabled = body.Enabled
-	a.persistVoiceEnabled()
-	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "enabled": body.Enabled, "needs_unplug": true})
+	_ = body
+	writeError(w, http.StatusConflict, "此旧接口已停用，请在通话页面完成带确认和备份的通话模式初始化")
 }
 
 func (a *app) persistVoiceEnabled() {

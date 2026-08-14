@@ -369,6 +369,7 @@ struct CallDialRequest: Encodable {
 struct CallActionResult: Decodable {
     let accepted: Bool
     let response: String?
+    let warning: String?
 }
 
 struct CallClearResult: Decodable {
@@ -418,6 +419,169 @@ struct VoiceEnableResult: Decodable {
 
 struct VoiceEnabledResponse: Decodable {
     let enabled: Bool
+}
+
+struct CallModeDownloadSource: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let detail: String
+    let trusted: Bool
+}
+
+struct CallModeRestoreNotice: Decodable, Equatable {
+    let backupID: String
+    let backupSavedAt: Date
+    let restoredAt: Date
+    let safetyBackupID: String?
+    let changed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case changed
+        case backupID = "backup_id"
+        case backupSavedAt = "backup_saved_at"
+        case restoredAt = "restored_at"
+        case safetyBackupID = "safety_backup_id"
+    }
+}
+
+struct CallModeStatus: Decodable, Equatable {
+    let state: String
+    let summary: String
+    let detail: String?
+    let adbEnabled: Bool
+    let interfacesReady: Bool
+    let adbAuthorizationRequired: Bool
+    let uacEnabled: Bool
+    let voiceConfigured: Bool
+    let runtimeDownloaded: Bool
+    let runtimeVersion: String
+    let runtimePath: String
+    let downloadedBytes: Int64
+    let totalBytes: Int64
+    let source: String?
+    let canEnable: Bool
+    let canDownload: Bool
+    let canRetry: Bool
+    let requiresADBAuthorizationConfirmation: Bool
+    let requiresUSBConfirmation: Bool
+    let requiresDownloadConfirmation: Bool
+    let backupPath: String?
+    let lastRestore: CallModeRestoreNotice?
+    let updatedAt: Date
+    let sources: [CallModeDownloadSource]
+    let upstream: String
+
+    var isReady: Bool { state == "ready" }
+    var isBusy: Bool {
+        [
+            "authorizing_adb", "enabling_usb", "enabling_voice", "restarting", "verifying_usb",
+            "downloading", "preparing", "restoring_usb", "restarting_restore",
+        ].contains(state)
+    }
+    var downloadProgress: Double {
+        guard totalBytes > 0 else { return 0 }
+        return min(1, max(0, Double(downloadedBytes) / Double(totalBytes)))
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case state, summary, detail, source, sources, upstream
+        case adbEnabled = "adb_enabled"
+        case interfacesReady = "interfaces_ready"
+        case adbAuthorizationRequired = "adb_authorization_required"
+        case uacEnabled = "uac_enabled"
+        case voiceConfigured = "voice_configured"
+        case runtimeDownloaded = "runtime_downloaded"
+        case runtimeVersion = "runtime_version"
+        case runtimePath = "runtime_path"
+        case downloadedBytes = "downloaded_bytes"
+        case totalBytes = "total_bytes"
+        case canEnable = "can_enable"
+        case canDownload = "can_download"
+        case canRetry = "can_retry"
+        case requiresADBAuthorizationConfirmation = "requires_adb_authorization_confirmation"
+        case requiresUSBConfirmation = "requires_usb_confirmation"
+        case requiresDownloadConfirmation = "requires_download_confirmation"
+        case backupPath = "backup_path"
+        case lastRestore = "last_restore"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct CallModeUSBBackupSummary: Decodable, Identifiable, Equatable {
+    let id: String
+    let fileName: String
+    let schemaVersion: Int
+    let savedAt: Date
+    let reason: String
+    let moduleIMEI: String?
+    let firmware: String?
+    let vendorID: String?
+    let productID: String?
+    let flags: [Int]?
+    let adbEnabled: Bool
+    let uacEnabled: Bool
+    let voiceIncluded: Bool
+    let imsConfigured: Bool
+    let valid: Bool
+    let restorable: Bool
+    let detail: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, reason, flags, valid, restorable, detail, firmware
+        case fileName = "file_name"
+        case schemaVersion = "schema_version"
+        case savedAt = "saved_at"
+        case moduleIMEI = "module_imei"
+        case vendorID = "vendor_id"
+        case productID = "product_id"
+        case adbEnabled = "adb_enabled"
+        case uacEnabled = "uac_enabled"
+        case voiceIncluded = "voice_included"
+        case imsConfigured = "ims_configured"
+    }
+}
+
+struct CallModeUSBBackupListResponse: Decodable {
+    let backups: [CallModeUSBBackupSummary]
+}
+
+struct CallModeEnableRequest: Encodable {
+    let confirm: Bool
+    let confirmADBAuthorization: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case confirm
+        case confirmADBAuthorization = "confirm_adb_authorization"
+    }
+}
+
+struct CallModeDownloadRequest: Encodable {
+    let confirm: Bool
+    let source: String
+}
+
+struct CallModeRestoreRequest: Encodable {
+    let confirm: Bool
+    let backupID: String
+
+    enum CodingKeys: String, CodingKey {
+        case confirm
+        case backupID = "backup_id"
+    }
+}
+
+struct CallAudioStartResult: Decodable {
+    let started: Bool
+    let runtimeVersion: String
+
+    enum CodingKeys: String, CodingKey {
+        case started
+        case runtimeVersion = "runtime_version"
+    }
+}
+
+struct CallAudioStopResult: Decodable {
+    let stopped: Bool
 }
 
 /// GET /api/network/services
