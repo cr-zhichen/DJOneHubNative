@@ -30,6 +30,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>用于扫描运营商提供的 eSIM 二维码，画面仅在本机处理。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>用于在蜂窝通话中将你的声音发送到已连接的 DJI One 4G 模块。</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>非官方项目，仅限非商业用途</string>
 </dict>

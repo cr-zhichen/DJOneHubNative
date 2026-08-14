@@ -4,6 +4,7 @@ import SwiftUI
 enum AppSection: String, CaseIterable, Identifiable {
     case home = "首页"
     case sms = "短信"
+    case calls = "通话"
     case esim = "eSIM 卡片"
     case routing = "应用分流"
     case debug = "调试与诊断"
@@ -15,6 +16,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "house.fill"
         case .sms: return "message.fill"
+        case .calls: return "phone.fill"
         case .esim: return "simcard.fill"
         case .routing: return "point.3.connected.trianglepath.dotted"
         case .debug: return "terminal.fill"
@@ -70,6 +72,7 @@ struct ContentView: View {
             if selection == .sms {
                 attentionStore.markSMSViewed()
             }
+            attentionStore.setViewingCalls(selection == .calls)
             showUpdatePrompt = updateChecker.pendingUpdate != nil
             // 启动即点击通知时，pendingOpenSender 可能早于 onChange 挂载设置，这里补一次
             if smsStore.pendingOpenSender != nil {
@@ -81,10 +84,14 @@ struct ContentView: View {
             if newValue == .sms {
                 attentionStore.markSMSViewed()
             }
+            attentionStore.setViewingCalls(newValue == .calls)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             if selection == .sms, smsStore.viewingSMS {
                 attentionStore.markSMSViewed()
+            }
+            if selection == .calls {
+                attentionStore.markCallsViewed()
             }
         }
         .onChange(of: updateChecker.pendingUpdate != nil) { shown in
@@ -122,10 +129,10 @@ struct ContentView: View {
             CallDetailView()
         }
         .onChange(of: store.showCallDetail) { shown in
-            // 点击来电通知：切回首页并弹出通话详情
+            // 点击来电通知：切到通话页并弹出通话详情
             if shown {
                 attentionStore.markCallsViewed()
-                selection = .home
+                selection = .calls
             }
         }
     }
@@ -135,6 +142,7 @@ struct ContentView: View {
         switch selection ?? .home {
         case .home: HomeView()
         case .sms: SMSView()
+        case .calls: CallView()
         case .esim: ESIMView()
         case .routing: TrafficRoutingView()
         case .debug: DiagnosticsView()
@@ -144,7 +152,7 @@ struct ContentView: View {
 
     private func attentionCount(for section: AppSection) -> Int? {
         switch section {
-        case .home:
+        case .calls:
             return attentionStore.unviewedCallCount
         case .sms:
             return attentionStore.unreadSMSCount

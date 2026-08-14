@@ -51,6 +51,7 @@ final class DashboardStore: ObservableObject {
 
     /// 防止轮询请求叠加：上次未完成时跳过本次
     private var refreshInFlight = false
+    private var callModeRefreshInFlight = false
 
     @Published var usbnetEnabled = false
     @Published var usbnetLoaded = false
@@ -71,13 +72,20 @@ final class DashboardStore: ObservableObject {
     @Published var smsAdopt = UserDefaults.standard.bool(forKey: "smsAdopt")
 
     /// 语音功能（USB 音频）
-    @Published var voiceEnabled = UserDefaults.standard.bool(forKey: "voiceEnabled")
-    @Published var voiceSwitching = false
     @Published var voiceError: String?
+    @Published var callModeStatus: CallModeStatus?
+    @Published var callModeActionInFlight = false
+    @Published var callModeError: String?
+    @Published var callModeBackups: [CallModeUSBBackupSummary] = []
+    @Published var callModeBackupsLoading = false
+    @Published var callModeBackupError: String?
+    @Published var callModeBackupExportingID: String?
+    @Published var callModeRestoreInFlight = false
     @Published var callStatus = CallStatus(state: "idle", number: nil, incoming: false, active: false)
     @Published var dialNumber = ""
     @Published var audioError: String?
     @Published var audioRunning = false
+    private var observedCallModeRestoreAt: Date?
     /// 本次来电时间（用于详情展示）
     @Published var incomingAt: Date?
     /// 是否显示来电详情弹窗
@@ -104,6 +112,7 @@ final class DashboardStore: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var networkRecoveryTask: Task<Void, Never>?
     private var lastAutomaticNetworkRecoveryAt: Date?
+    private var audioActivationTask: Task<Void, Never>?
 
     private static let moduleNetworkDisconnectedError = "4G 模块网卡未连接"
     private static let automaticNetworkRecoveryCooldown: TimeInterval = 10 * 60
@@ -120,7 +129,7 @@ final class DashboardStore: ObservableObject {
                     self.loadUSBStatus()
                     self.loadServices()
                     self.syncSMSAdopt()
-                    self.syncVoiceEnabled()
+                    self.pollCallModeStatus()
                     self.loadCallHistory()
                 default:
                     self.stopPolling()
@@ -143,6 +152,15 @@ final class DashboardStore: ObservableObject {
         usbnetEnabled = false
         usbnetLoaded = false
         toast = nil
+        callModeStatus = nil
+        callModeActionInFlight = false
+        callModeError = nil
+        callModeBackups = []
+        callModeBackupsLoading = false
+        callModeBackupError = nil
+        callModeBackupExportingID = nil
+        callModeRestoreInFlight = false
+        observedCallModeRestoreAt = nil
         callStatus = CallStatus(state: "idle", number: nil, incoming: false, active: false)
         stopAudio()
     }
@@ -152,12 +170,15 @@ final class DashboardStore: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, !self.networkRecovering else { return }
+                guard self.audioActivationTask == nil else { return }
                 self.refresh()
                 self.pollCallStatus()
+                self.pollCallModeStatus()
             }
         }
         refresh()
         pollCallStatus()
+        pollCallModeStatus()
     }
 
     private func stopPolling() {
@@ -296,7 +317,7 @@ final class DashboardStore: ObservableObject {
     }
 
     private func performNetworkRecovery(_ trigger: NetworkRecoveryTrigger) async {
-        guard !busy, !voiceSwitching else {
+        guard !busy, callModeStatus?.isBusy != true else {
             if trigger == .manual {
                 showToast(message: "模块正在执行其他操作，请稍后重试", isSuccess: false, title: "无法重新连接")
             }
@@ -448,34 +469,166 @@ final class DashboardStore: ObservableObject {
 
     // MARK: - 语音与通话
 
-    func syncVoiceEnabled() {
+    func pollCallModeStatus() {
+        guard case .running = backend.state else { return }
+        guard audioActivationTask == nil else { return }
+        guard !callModeRefreshInFlight else { return }
+        callModeRefreshInFlight = true
         Task {
+            defer { callModeRefreshInFlight = false }
             do {
-                let r: VoiceEnabledResponse = try await APIClient().get("api/voice/enabled")
-                UserDefaults.standard.set(r.enabled, forKey: "voiceEnabled")
-                voiceEnabled = r.enabled
+                let previousBackupPath = callModeStatus?.backupPath
+                let status: CallModeStatus = try await APIClient(timeoutInterval: 12)
+                    .get("api/call-mode/status")
+                callModeStatus = status
+                if status.isBusy || status.isReady {
+                    callModeError = nil
+                }
+                if let backupPath = status.backupPath,
+                   !backupPath.isEmpty,
+                   backupPath != previousBackupPath {
+                    loadCallModeBackups()
+                }
+                if let restore = status.lastRestore {
+                    let isNewRestore = observedCallModeRestoreAt != restore.restoredAt
+                    observedCallModeRestoreAt = restore.restoredAt
+                    if isNewRestore && callModeRestoreInFlight {
+                        callModeRestoreInFlight = false
+                        loadCallModeBackups()
+                        showToast(
+                            message: restore.changed
+                                ? "模块原始 USB 配置已还原并完成重启验证。"
+                                : "当前模块配置已经与所选备份一致。",
+                            isSuccess: true,
+                            title: "模块配置")
+                    }
+                }
+                if status.isReady && callStatus.isActive && !audioRunning {
+                    startAudio()
+                }
+                if !status.isBusy {
+                    callModeActionInFlight = false
+                    if status.state == "failed" {
+                        callModeRestoreInFlight = false
+                    }
+                }
             } catch {
-                try? await APIClient().send("api/voice/enable", body: VoiceEnableRequest(enabled: voiceEnabled))
+                callModeError = "读取通话模式失败：\(error.localizedDescription)"
             }
         }
     }
 
-    func setVoiceEnabled(_ enabled: Bool) {
-        guard voiceEnabled != enabled else { return }
-        voiceEnabled = enabled
-        voiceSwitching = true
-        voiceError = nil
+    func enableCallMode(confirmADBAuthorization: Bool) {
+        guard callModeActionInFlight == false else { return }
+        callModeActionInFlight = true
+        callModeError = nil
         Task {
             do {
-                let result: VoiceEnableResult = try await APIClient().send(
-                    "api/voice/enable", body: VoiceEnableRequest(enabled: enabled))
-                voiceSwitching = false
-                UserDefaults.standard.set(enabled, forKey: "voiceEnabled")
-                // 模块会自行重启生效，无需用户手动重新插拔
-                voiceError = nil
+                let status: CallModeStatus = try await APIClient(timeoutInterval: 15).send(
+                    "api/call-mode/enable",
+                    body: CallModeEnableRequest(
+                        confirm: true,
+                        confirmADBAuthorization: confirmADBAuthorization))
+                callModeStatus = status
             } catch {
-                voiceSwitching = false
-                voiceError = "切换失败：\(error.localizedDescription)"
+                callModeActionInFlight = false
+                callModeError = "开启通话模式失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func downloadCallModeRuntime(source: String) {
+        guard callModeActionInFlight == false else { return }
+        callModeActionInFlight = true
+        callModeError = nil
+        Task {
+            do {
+                let status: CallModeStatus = try await APIClient(timeoutInterval: 15).send(
+                    "api/call-mode/download",
+                    body: CallModeDownloadRequest(confirm: true, source: source))
+                callModeStatus = status
+            } catch {
+                callModeActionInFlight = false
+                callModeError = "下载运行时失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func retryCallModePreparation() {
+        guard callModeActionInFlight == false else { return }
+        callModeActionInFlight = true
+        callModeError = nil
+        Task {
+            do {
+                let status: CallModeStatus = try await APIClient(timeoutInterval: 15)
+                    .send("api/call-mode/retry")
+                callModeStatus = status
+                if !status.isBusy {
+                    callModeActionInFlight = false
+                }
+            } catch {
+                callModeActionInFlight = false
+                callModeError = "重新准备通话模式失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func loadCallModeBackups() {
+        guard case .running = backend.state else { return }
+        guard !callModeBackupsLoading else { return }
+        callModeBackupsLoading = true
+        callModeBackupError = nil
+        Task {
+            defer { callModeBackupsLoading = false }
+            do {
+                let response: CallModeUSBBackupListResponse = try await APIClient(timeoutInterval: 12)
+                    .get("api/call-mode/backups")
+                callModeBackups = response.backups
+            } catch {
+                callModeBackupError = "读取配置备份失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func exportCallModeBackup(_ backup: CallModeUSBBackupSummary, to destination: URL) {
+        guard callModeBackupExportingID == nil else { return }
+        guard let encodedID = backup.id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            callModeBackupError = "备份文件名无法安全编码。"
+            return
+        }
+        callModeBackupExportingID = backup.id
+        callModeBackupError = nil
+        Task {
+            defer { callModeBackupExportingID = nil }
+            do {
+                let data = try await APIClient(timeoutInterval: 20)
+                    .getData("api/call-mode/backups/export?id=\(encodedID)")
+                try data.write(to: destination, options: .atomic)
+                showToast(
+                    message: "备份已保存到 \(destination.path)",
+                    isSuccess: true,
+                    title: "配置备份")
+            } catch {
+                callModeBackupError = "导出配置备份失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func restoreCallModeBackup(_ backup: CallModeUSBBackupSummary) {
+        guard callModeActionInFlight == false else { return }
+        callModeActionInFlight = true
+        callModeRestoreInFlight = true
+        callModeError = nil
+        Task {
+            do {
+                let status: CallModeStatus = try await APIClient(timeoutInterval: 15).send(
+                    "api/call-mode/restore",
+                    body: CallModeRestoreRequest(confirm: true, backupID: backup.id))
+                callModeStatus = status
+            } catch {
+                callModeActionInFlight = false
+                callModeRestoreInFlight = false
+                callModeError = "还原模块配置失败：\(error.localizedDescription)"
             }
         }
     }
@@ -501,6 +654,11 @@ final class DashboardStore: ObservableObject {
         if status.isIncoming && !previous.isIncoming {
             incomingAt = Date()
             IncomingCallCard.shared.show(store: self)
+        }
+        // 只有蜂窝通话真正进入 active 后才建立模块 D4/UAC 路由，避免拨号音、
+        // 未接通呼叫或来电铃声提前占用模块音频设备。
+        if status.isActive && !previous.isActive {
+            startAudio()
         }
         // 通话结束（非空闲 → 空闲）时清空来电信息
         if status.isIdle && (previous.isActive || previous.state == "unknown" || previous.isIncoming) {
@@ -555,12 +713,12 @@ final class DashboardStore: ObservableObject {
     func dial(_ number: String) {
         let trimmed = number.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        voiceError = nil
         Task {
             do {
                 let _: CallActionResult = try await APIClient().send(
                     "api/call/dial", body: CallDialRequest(number: trimmed))
-                startAudio()
-                await pollCallStatus()
+                pollCallStatus()
             } catch {
                 voiceError = "拨号失败：\(error.localizedDescription)"
             }
@@ -568,10 +726,11 @@ final class DashboardStore: ObservableObject {
     }
 
     func answerCall() {
+        voiceError = nil
         Task {
             do {
                 let _: CallActionResult = try await APIClient().send("api/call/answer")
-                startAudio()
+                pollCallStatus()
             } catch {
                 voiceError = "接听失败：\(error.localizedDescription)"
             }
@@ -579,29 +738,86 @@ final class DashboardStore: ObservableObject {
     }
 
     func hangup() {
+        voiceError = nil
+        // 先停止主机 IO，模块侧路由由 /hangup 在 ATH 成功后清理，确保
+        // voiceUSBTransition 不会让清理操作抢在挂断命令前面。
+        stopAudio(stopModuleRoute: false)
         Task {
             do {
-                let _: CallActionResult = try await APIClient().send("api/call/hangup")
-                stopAudio()
-                await pollCallStatus()
+                let result: CallActionResult = try await APIClient().send("api/call/hangup")
+                if let warning = result.warning, !warning.isEmpty {
+                    audioError = warning
+                }
+                pollCallStatus()
             } catch {
                 // ATH 失败（可能通话已由对方结束）：刷新状态同步 UI
                 voiceError = "挂断失败：\(error.localizedDescription)"
-                await pollCallStatus()
+                pollCallStatus()
             }
         }
     }
 
-    func startAudio() {
-        let error = AudioBridge.shared.start()
-        audioError = error
-        audioRunning = error == nil
+    private func startAudio() {
+        guard audioActivationTask == nil, !audioRunning else { return }
+        guard callModeStatus?.isReady == true else {
+            audioError = "通话已接通，但通话模式尚未就绪。请挂断后完成运行时准备。"
+            return
+        }
+        audioError = nil
+        audioActivationTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.audioActivationTask = nil }
+            do {
+                guard await AudioBridge.shared.requestMicrophoneAccess() else {
+                    self.audioError = "麦克风权限未开启。请在系统设置“隐私与安全性 → 麦克风”中允许 DJOneHub。"
+                    return
+                }
+                let result: CallAudioStartResult = try await APIClient(timeoutInterval: 60)
+                    .send("api/call/audio/start")
+                guard result.started else {
+                    self.audioError = "模块没有确认通话音频路由已启动。"
+                    return
+                }
+                try Task.checkCancellation()
+                guard self.callStatus.isActive else {
+                    let _: CallAudioStopResult? = try? await APIClient(timeoutInterval: 20)
+                        .send("api/call/audio/stop")
+                    return
+                }
+                if let error = AudioBridge.shared.start() {
+                    self.audioError = error
+                    self.audioRunning = false
+                    let _: CallAudioStopResult? = try? await APIClient(timeoutInterval: 20)
+                        .send("api/call/audio/stop")
+                    return
+                }
+                self.audioRunning = true
+            } catch is CancellationError {
+                // stopAudio 决定由普通停止接口还是 /hangup 负责模块侧清理，
+                // 避免两个清理请求与 ATH 竞争同一个 USB 过渡锁。
+            } catch {
+                self.audioError = "通话音频启动失败：\(error.localizedDescription)"
+                self.audioRunning = false
+            }
+        }
     }
 
-    func stopAudio() {
+    func stopAudio(stopModuleRoute: Bool = true) {
+        let shouldStopModuleRoute = stopModuleRoute && (audioRunning || audioActivationTask != nil)
+        audioActivationTask?.cancel()
+        audioActivationTask = nil
         AudioBridge.shared.stop()
-        audioError = nil
         audioRunning = false
+        if shouldStopModuleRoute, case .running = backend.state {
+            Task {
+                do {
+                    let _: CallAudioStopResult = try await APIClient(timeoutInterval: 20)
+                        .send("api/call/audio/stop")
+                } catch {
+                    audioError = "通话音频清理失败：\(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     // MARK: - 提示气泡

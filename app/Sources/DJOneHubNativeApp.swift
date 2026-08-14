@@ -928,20 +928,6 @@ private struct MenuBarDashboardPanel: View {
                 detail: "保存到本机并清理模块中的原始短信",
                 isOn: smsAdoptBinding,
                 isEnabled: backend.state == .running)
-            controlRow(
-                title: store.voiceSwitching ? "语音功能（切换中…）" : "语音功能",
-                detail: "启用 USB 音频与通话能力",
-                isOn: voiceBinding,
-                isEnabled: backend.state == .running && !store.voiceSwitching)
-
-            if let voiceError = store.voiceError, !voiceError.isEmpty {
-                Text("语音功能：\(formatMenuText(voiceError, limit: 80))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 2)
-            }
         }
         .padding(.vertical, 10)
     }
@@ -1256,19 +1242,6 @@ private struct MenuBarDashboardPanel: View {
                     ) else { return }
                 }
                 store.setSMSAdopt(enabled)
-            })
-    }
-
-    private var voiceBinding: Binding<Bool> {
-        Binding(
-            get: { store.voiceEnabled },
-            set: { enabled in
-                guard confirmSystemAction(
-                    title: enabled ? "启用语音功能？" : "关闭语音功能？",
-                    message: "切换语音功能会让模块短暂重启，期间网络和通话暂时不可用。",
-                    confirmTitle: enabled ? "启用并重启模块" : "关闭并重启模块"
-                ) else { return }
-                store.setVoiceEnabled(enabled)
             })
     }
 

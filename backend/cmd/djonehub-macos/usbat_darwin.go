@@ -127,6 +127,19 @@ func usbATCandidates(handle *C.libusb_device_handle) ([]usbATCandidate, error) {
 	for _, intf := range interfaces {
 		altsettings := unsafe.Slice(intf.altsetting, int(intf.num_altsetting))
 		for _, alt := range altsettings {
+			// QDC507/MDM9x07 exposes diagnostics/NMEA before its AT and modem
+			// functions. Probing those unrelated bulk endpoints can wedge a
+			// synchronous IOUSBLib transfer after re-enumeration, and its timeout
+			// is not reliably delivered on macOS. The supported DJI and Quectel
+			// compositions keep AT/modem on interfaces 2 and 3.
+			if alt.bInterfaceNumber != 2 && alt.bInterfaceNumber != 3 {
+				continue
+			}
+			if byte(alt.bInterfaceClass) != 0xff ||
+				byte(alt.bInterfaceSubClass) != 0x00 ||
+				byte(alt.bInterfaceProtocol) != 0x00 {
+				continue
+			}
 			var endpointIn, endpointOut byte
 			endpoints := unsafe.Slice(alt.endpoint, int(alt.bNumEndpoints))
 			for _, ep := range endpoints {
