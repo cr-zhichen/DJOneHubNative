@@ -80,22 +80,17 @@ final class DashboardStore: ObservableObject {
     @Published var callModeBackupsLoading = false
     @Published var callModeBackupError: String?
     @Published var callModeBackupExportingID: String?
+    @Published var callModeBackupImporting = false
+    @Published var callModeBackupDeletingID: String?
     @Published var callModeRestoreInFlight = false
     @Published var callStatus = CallStatus(state: "idle", number: nil, incoming: false, active: false)
+    @Published var callAnswerInFlight = false
     @Published var dialNumber = ""
     @Published var audioError: String?
     @Published var audioRunning = false
     private var observedCallModeRestoreAt: Date?
     /// 本次来电时间（用于详情展示）
     @Published var incomingAt: Date?
-    /// 是否显示来电详情弹窗
-    @Published var showCallDetail = false {
-        didSet {
-            if showCallDetail {
-                AttentionStore.shared.markCallsViewed()
-            }
-        }
-    }
     /// 通话记录
     @Published var callHistory: [CallRecord] = []
     /// 是否显示通话记录弹窗
@@ -159,9 +154,14 @@ final class DashboardStore: ObservableObject {
         callModeBackupsLoading = false
         callModeBackupError = nil
         callModeBackupExportingID = nil
+        callModeBackupImporting = false
+        callModeBackupDeletingID = nil
         callModeRestoreInFlight = false
         observedCallModeRestoreAt = nil
         callStatus = CallStatus(state: "idle", number: nil, incoming: false, active: false)
+        callAnswerInFlight = false
+        incomingAt = nil
+        IncomingCallCard.shared.hide()
         stopAudio()
     }
 
@@ -591,7 +591,7 @@ final class DashboardStore: ObservableObject {
     }
 
     func exportCallModeBackup(_ backup: CallModeUSBBackupSummary, to destination: URL) {
-        guard callModeBackupExportingID == nil else { return }
+        guard !callModeBackupFileOperationInFlight else { return }
         guard let encodedID = backup.id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             callModeBackupError = "备份文件名无法安全编码。"
             return
@@ -610,6 +610,63 @@ final class DashboardStore: ObservableObject {
                     title: "配置备份")
             } catch {
                 callModeBackupError = "导出配置备份失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func importCallModeBackup(from source: URL) {
+        guard !callModeBackupFileOperationInFlight else { return }
+        callModeBackupImporting = true
+        callModeBackupError = nil
+        Task {
+            defer { callModeBackupImporting = false }
+            let accessGranted = source.startAccessingSecurityScopedResource()
+            defer {
+                if accessGranted {
+                    source.stopAccessingSecurityScopedResource()
+                }
+            }
+            do {
+                let values = try source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+                guard values.isRegularFile == true,
+                      let fileSize = values.fileSize,
+                      fileSize > 0,
+                      fileSize <= 64 * 1_024 else {
+                    callModeBackupError = "导入配置备份失败：请选择不超过 64 KB 的 JSON 文件。"
+                    return
+                }
+                let data = try Data(contentsOf: source, options: [.mappedIfSafe])
+                let response: CallModeUSBBackupImportResponse = try await APIClient(timeoutInterval: 20)
+                    .upload("api/call-mode/backups/import", data: data)
+                loadCallModeBackups()
+                showToast(
+                    message: "已导入 \(response.backup.savedAt.formatted(date: .numeric, time: .shortened)) 的模块配置备份。",
+                    isSuccess: true,
+                    title: "配置备份")
+            } catch {
+                callModeBackupError = "导入配置备份失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func deleteCallModeBackup(_ backup: CallModeUSBBackupSummary) {
+        guard !callModeBackupFileOperationInFlight, !callModeActionInFlight else { return }
+        callModeBackupDeletingID = backup.id
+        callModeBackupError = nil
+        Task {
+            defer { callModeBackupDeletingID = nil }
+            do {
+                let response: CallModeUSBBackupDeleteResponse = try await APIClient(timeoutInterval: 20).send(
+                    "api/call-mode/backups/delete",
+                    body: CallModeBackupDeleteRequest(confirm: true, backupID: backup.id))
+                guard response.deleted else {
+                    callModeBackupError = "删除配置备份失败：服务没有确认删除。"
+                    return
+                }
+                callModeBackups.removeAll { $0.id == response.backupID }
+                showToast(message: "配置备份已删除。", isSuccess: true, title: "配置备份")
+            } catch {
+                callModeBackupError = "删除配置备份失败：\(error.localizedDescription)"
             }
         }
     }
@@ -654,6 +711,9 @@ final class DashboardStore: ObservableObject {
         if status.isIncoming && !previous.isIncoming {
             incomingAt = Date()
             IncomingCallCard.shared.show(store: self)
+        }
+        if previous.isIncoming && !status.isIncoming {
+            IncomingCallCard.shared.hide()
         }
         // 只有蜂窝通话真正进入 active 后才建立模块 D4/UAC 路由，避免拨号音、
         // 未接通呼叫或来电铃声提前占用模块音频设备。
@@ -726,8 +786,19 @@ final class DashboardStore: ObservableObject {
     }
 
     func answerCall() {
+        guard !callAnswerInFlight else { return }
+        guard callStatus.isIncoming else {
+            voiceError = "当前没有可接听的来电。"
+            return
+        }
+        guard callModeStatus?.isReady == true else {
+            voiceError = "通话模式尚未就绪，暂时不能接听。"
+            return
+        }
         voiceError = nil
+        callAnswerInFlight = true
         Task {
+            defer { callAnswerInFlight = false }
             do {
                 let _: CallActionResult = try await APIClient().send("api/call/answer")
                 pollCallStatus()
@@ -735,6 +806,12 @@ final class DashboardStore: ObservableObject {
                 voiceError = "接听失败：\(error.localizedDescription)"
             }
         }
+    }
+
+    private var callModeBackupFileOperationInFlight: Bool {
+        callModeBackupExportingID != nil
+            || callModeBackupImporting
+            || callModeBackupDeletingID != nil
     }
 
     func hangup() {

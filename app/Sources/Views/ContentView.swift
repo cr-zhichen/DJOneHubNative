@@ -31,7 +31,9 @@ struct ContentView: View {
     @EnvironmentObject private var smsStore: SMSStore
     @EnvironmentObject private var attentionStore: AttentionStore
     @EnvironmentObject private var updateChecker: UpdateChecker
+    @ObservedObject private var mainWindowRequests = MainWindowRequestCenter.shared
     @State private var selection: AppSection? = .home
+    @State private var handledWindowRequest = 0
     @State private var showUpdatePrompt = false
 
     var body: some View {
@@ -78,6 +80,7 @@ struct ContentView: View {
             if smsStore.pendingOpenSender != nil {
                 selection = .sms
             }
+            handleMainWindowRequest()
         }
         .onChange(of: selection) { newValue in
             smsStore.viewingSMS = newValue == .sms
@@ -124,16 +127,8 @@ struct ContentView: View {
                 selection = .sms
             }
         }
-        // 来电详情弹窗（根层挂载，任意页面都能弹出）
-        .sheet(isPresented: $store.showCallDetail) {
-            CallDetailView()
-        }
-        .onChange(of: store.showCallDetail) { shown in
-            // 点击来电通知：切到通话页并弹出通话详情
-            if shown {
-                attentionStore.markCallsViewed()
-                selection = .calls
-            }
+        .onChange(of: mainWindowRequests.generation) { _ in
+            handleMainWindowRequest()
         }
     }
 
@@ -158,6 +153,16 @@ struct ContentView: View {
             return attentionStore.unreadSMSCount
         default:
             return nil
+        }
+    }
+
+    private func handleMainWindowRequest() {
+        guard handledWindowRequest != mainWindowRequests.generation else { return }
+        handledWindowRequest = mainWindowRequests.generation
+        guard let destination = mainWindowRequests.destination else { return }
+        selection = destination
+        if destination == .calls {
+            attentionStore.markCallsViewed()
         }
     }
 }

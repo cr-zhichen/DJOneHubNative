@@ -21,6 +21,8 @@ struct CallView: View {
     @State private var showAllBackups = false
     @State private var backupToRestore: CallModeUSBBackupSummary?
     @State private var showRestoreConfirmation = false
+    @State private var backupToDelete: CallModeUSBBackupSummary?
+    @State private var showDeleteConfirmation = false
     @State private var layoutMode = CallLayoutMode.compact
 
     private let dialKeys: [DialKey] = [
@@ -122,6 +124,23 @@ struct CallView: View {
             }
         } message: {
             Text(restoreConfirmationMessage)
+        }
+        .confirmationDialog(
+            "删除配置备份？",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            if let backup = backupToDelete {
+                Button("删除备份", role: .destructive) {
+                    store.deleteCallModeBackup(backup)
+                    backupToDelete = nil
+                }
+            }
+            Button("取消", role: .cancel) {
+                backupToDelete = nil
+            }
+        } message: {
+            Text(deleteConfirmationMessage)
         }
         .sheet(isPresented: $showAllHistory) {
             CallHistoryView()
@@ -491,13 +510,21 @@ struct CallView: View {
                     Button {
                         store.answerCall()
                     } label: {
-                        Label("接听", systemImage: "phone.fill")
-                            .frame(minWidth: 84)
+                        HStack(spacing: 7) {
+                            if store.callAnswerInFlight {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "phone.fill")
+                            }
+                            Text(store.callAnswerInFlight ? "正在接听" : "接听")
+                        }
+                        .frame(minWidth: 84)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
                     .controlSize(.large)
-                    .disabled(!callReady)
+                    .disabled(!callReady || store.callAnswerInFlight)
                     .help(callReady ? "接听来电" : "请先完成通话模式准备")
                 }
 
@@ -554,11 +581,6 @@ struct CallView: View {
                     title: "模块部署",
                     detail: deploymentDetail,
                     state: deploymentStepState)
-                Divider().padding(.leading, 29)
-                readinessRow(
-                    title: "通话音频",
-                    detail: audioDetail,
-                    state: audioStepState)
             }
             .padding(.horizontal, 14)
 
@@ -591,8 +613,6 @@ struct CallView: View {
                 compactReadinessRow(title: "运行时下载", state: runtimeStepState)
                 Divider().padding(.leading, 27)
                 compactReadinessRow(title: "模块部署", state: deploymentStepState)
-                Divider().padding(.leading, 27)
-                compactReadinessRow(title: "通话音频", state: audioStepState)
             }
             .padding(.horizontal, 12)
 
@@ -612,10 +632,17 @@ struct CallView: View {
     }
 
     private var ringtoneOptionCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("来电铃声")
-                .font(.callout.bold())
-            ringtoneSettings
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text("来电铃声")
+                    .font(.callout.bold())
+                Spacer(minLength: 14)
+                ringtoneControls
+            }
+
+            Text("来电时由 Mac 播放；静音不会影响模块侧呼叫状态。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -638,13 +665,31 @@ struct CallView: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
+                if store.callModeBackupImporting {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("正在导入配置备份")
+                } else {
+                    Button {
+                        chooseImportFile()
+                    } label: {
+                        Label("导入…", systemImage: "tray.and.arrow.down")
+                    }
+                    .controlSize(.small)
+                    .disabled(
+                        store.callModeBackupExportingID != nil
+                            || store.callModeBackupDeletingID != nil)
+                }
                 Button {
                     store.loadCallModeBackups()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .controlSize(.small)
-                .disabled(store.callModeBackupsLoading)
+                .disabled(
+                    store.callModeBackupsLoading
+                        || store.callModeBackupImporting
+                        || store.callModeBackupDeletingID != nil)
                 .help("刷新配置备份")
                 .accessibilityLabel("刷新配置备份")
             }
@@ -880,43 +925,37 @@ struct CallView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var ringtoneSettings: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("来电时由 Mac 播放；静音不会影响模块侧呼叫状态。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 8) {
-                Picker("来电铃声", selection: Binding(
-                    get: { Ringtones.selectedID() },
-                    set: {
-                        ringtonePreview.stop()
-                        Ringtones.setSelected($0)
-                    }
-                )) {
-                    ForEach(Ringtones.all) { ringtone in
-                        Text(ringtone.displayName).tag(ringtone.id)
-                    }
+    private var ringtoneControls: some View {
+        HStack(spacing: 8) {
+            Picker("来电铃声", selection: Binding(
+                get: { Ringtones.selectedID() },
+                set: {
+                    ringtonePreview.stop()
+                    Ringtones.setSelected($0)
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(maxWidth: .infinity)
-
-                Button {
-                    ringtonePreview.toggle()
-                } label: {
-                    Image(systemName: ringtonePreview.isPlaying ? "stop.circle.fill" : "play.circle.fill")
+            )) {
+                ForEach(Ringtones.all) { ringtone in
+                    Text(ringtone.displayName).tag(ringtone.id)
                 }
-                .disabled(Ringtones.selectedID() == Ringtones.silentID)
-                .help(ringtonePreview.isPlaying ? "停止试听" : "试听当前铃声")
-                .accessibilityLabel(ringtonePreview.isPlaying ? "停止试听" : "试听当前铃声")
             }
+            .labelsHidden()
+            .pickerStyle(.menu)
+
+            Button {
+                ringtonePreview.toggle()
+            } label: {
+                Image(systemName: ringtonePreview.isPlaying ? "stop.circle.fill" : "play.circle.fill")
+            }
+            .disabled(Ringtones.selectedID() == Ringtones.silentID)
+            .help(ringtonePreview.isPlaying ? "停止试听" : "试听当前铃声")
+            .accessibilityLabel(ringtonePreview.isPlaying ? "停止试听" : "试听当前铃声")
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var backupContent: some View {
         VStack(alignment: .leading, spacing: 11) {
-            Text("修改 USB 配置前自动保存；只允许还原到同一模块。")
+            Text("修改 USB 配置前自动保存；可导入已导出的 JSON，只允许还原到同一模块。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -955,7 +994,7 @@ struct CallView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("还没有配置备份")
                             .font(.callout.weight(.medium))
-                        Text("首次开启通话模式时会自动创建。")
+                        Text("首次开启通话模式时会自动创建，也可以从 JSON 文件导入。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1034,10 +1073,13 @@ struct CallView: View {
                 Button {
                     chooseExportLocation(for: backup)
                 } label: {
-                    Label("导出…", systemImage: "square.and.arrow.down")
+                    Label("导出…", systemImage: "square.and.arrow.up")
                 }
                 .controlSize(.small)
-                .disabled(store.callModeBackupExportingID != nil)
+                .disabled(
+                    store.callModeBackupExportingID != nil
+                        || store.callModeBackupImporting
+                        || store.callModeBackupDeletingID != nil)
             }
 
             Button("还原…") {
@@ -1047,6 +1089,22 @@ struct CallView: View {
             .controlSize(.small)
             .disabled(!canRestore(backup))
             .help(restoreHelp(backup))
+
+            if store.callModeBackupDeletingID == backup.id {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("正在删除配置备份")
+            } else {
+                Button(role: .destructive) {
+                    backupToDelete = backup
+                    showDeleteConfirmation = true
+                } label: {
+                    Label("删除…", systemImage: "trash")
+                }
+                .controlSize(.small)
+                .disabled(!canDeleteBackup)
+                .help("从本机删除这份配置备份")
+            }
         }
     }
 
@@ -1139,12 +1197,6 @@ struct CallView: View {
         return .pending
     }
 
-    private var audioStepState: ReadinessState {
-        if store.audioRunning { return .complete }
-        if store.callStatus.isActive { return .current }
-        return .pending
-    }
-
     private var interfaceDetail: String {
         switch mode?.state {
         case "authorizing_adb":
@@ -1181,12 +1233,6 @@ struct CallView: View {
         case "failed" where mode?.runtimeDownloaded == true: return "部署或自检未通过，可重试"
         default: return "下载完成后自动部署到模块"
         }
-    }
-
-    private var audioDetail: String {
-        if store.audioRunning { return "Mac 与模块音频正在运行" }
-        if store.callStatus.isActive { return "正在建立模块与 Mac 音频链路" }
-        return callReady ? "接通后自动启动，挂断后回滚" : "模块部署完成后可用"
     }
 
     private var hasPreparationDetail: Bool {
@@ -1287,6 +1333,7 @@ struct CallView: View {
     }
 
     private func backupReasonText(_ backup: CallModeUSBBackupSummary) -> String {
+        if backup.imported { return "导入的模块配置" }
         switch backup.reason {
         case "before_call_mode": return "启用通话模式前"
         case "before_restore": return "还原前自动保护"
@@ -1328,6 +1375,13 @@ struct CallView: View {
             && !store.callModeActionInFlight
     }
 
+    private var canDeleteBackup: Bool {
+        !store.callModeActionInFlight
+            && !store.callModeBackupImporting
+            && store.callModeBackupExportingID == nil
+            && store.callModeBackupDeletingID == nil
+    }
+
     private func restoreHelp(_ backup: CallModeUSBBackupSummary) -> String {
         if !backup.valid { return "备份内容无效，不能还原" }
         if !backup.restorable { return "旧版备份缺少模块身份，只能导出" }
@@ -1356,6 +1410,12 @@ struct CallView: View {
         return "将把当前连接的模块还原到 \(time) 保存的配置（ADB \(backup.adbEnabled ? "开启" : "关闭")，UAC \(backup.uacEnabled ? "开启" : "关闭")\(voiceScope)）。应用会先自动备份当前配置，再写入、完整回读并重启模块；网络、短信和 eSIM 操作会短暂中断。本地下载的语音运行时不会删除。"
     }
 
+    private var deleteConfirmationMessage: String {
+        guard let backup = backupToDelete else { return "" }
+        let time = backup.savedAt.formatted(date: .numeric, time: .shortened)
+        return "将从本机永久删除 \(time) 的配置备份。此操作不会修改当前模块，但删除后无法在 DJOneHub 中导出或还原这份备份。"
+    }
+
     private var usbConfirmationTitle: String {
         if mode?.state == "needs_interface_recovery" {
             return "重启并恢复模块 ADB？"
@@ -1382,6 +1442,19 @@ struct CallView: View {
             return "应用会先备份当前 USB 与 IMS/VoLTE 配置，再在本机计算授权密码并持久授权模块 ADB；密码不会上传或保存。随后只开启缺少的 ADB/UAC 功能位、启用 IMS/VoLTE 并重启模块。配置备份可以关闭 ADB 接口，但不能保证撤销持久授权。重启期间 4G 网络、短信和 eSIM 操作会中断约 20–60 秒。"
         }
         return "应用会先备份当前 USB 与 IMS/VoLTE 配置，只开启缺少的 ADB/UAC 功能位并启用 IMS/VoLTE，然后重启模块。重启后会验证同一模块、完整配置和真实 ADB root。网络、短信和 eSIM 操作会短暂中断，通常需要 20–60 秒恢复。"
+    }
+
+    private func chooseImportFile() {
+        let panel = NSOpenPanel()
+        panel.title = "导入模块配置备份"
+        panel.message = "选择由 DJOneHub 导出的 JSON 备份。导入只保存到本机，不会立即修改模块。"
+        panel.prompt = "导入"
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        guard panel.runModal() == .OK, let source = panel.url else { return }
+        store.importCallModeBackup(from: source)
     }
 
     private func chooseExportLocation(for backup: CallModeUSBBackupSummary) {

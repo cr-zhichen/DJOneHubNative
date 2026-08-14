@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -232,5 +234,128 @@ func TestCallModeBackupListKeepsInvalidFilesVisibleAndSortsValidBackups(t *testi
 	}
 	if !invalidFound {
 		t.Fatalf("invalid backup was hidden or marked valid: %#v", backups)
+	}
+}
+
+func TestCallModeBackupImportPreservesValidatedJSON(t *testing.T) {
+	application := &app{dataDir: t.TempDir()}
+	payload, err := json.MarshalIndent(testCallModeBackup(), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = append(payload, '\n')
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/call-mode/backups/import",
+		bytes.NewReader(payload),
+	)
+	recorder := httptest.NewRecorder()
+	application.callModeBackupImportAPI(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Backup callModeUSBBackupSummary `json:"backup"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Backup.Imported || !response.Backup.Valid || !response.Backup.Restorable {
+		t.Fatalf("unexpected imported summary: %#v", response.Backup)
+	}
+	if !strings.HasPrefix(response.Backup.ID, "usb-imported-") || !validCallModeBackupID(response.Backup.ID) {
+		t.Fatalf("unexpected imported ID: %q", response.Backup.ID)
+	}
+	stored, info, err := readCallModeBackupFile(application.callModeBackupDirectory(), response.Backup.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored, payload) {
+		t.Fatal("import changed the original JSON payload")
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("imported backup mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestCallModeBackupImportRejectsTamperingAndOversize(t *testing.T) {
+	application := &app{dataDir: t.TempDir()}
+	tampered := testCallModeBackup()
+	tampered.RestoreCommand = "AT+QCFG=tampered"
+	payload, err := json.Marshal(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/call-mode/backups/import", bytes.NewReader(payload))
+	recorder := httptest.NewRecorder()
+	application.callModeBackupImportAPI(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("tampered status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	request = httptest.NewRequest(
+		http.MethodPost,
+		"/api/call-mode/backups/import",
+		bytes.NewReader(bytes.Repeat([]byte("x"), int(callModeBackupMaximumSize)+1)),
+	)
+	recorder = httptest.NewRecorder()
+	application.callModeBackupImportAPI(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("oversize status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	backups, err := application.listCallModeUSBBackups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("rejected imports created backups: %#v", backups)
+	}
+}
+
+func TestCallModeBackupDeleteRequiresConfirmationAndIdleOperation(t *testing.T) {
+	application := &app{dataDir: t.TempDir()}
+	path, err := writeCallModeUSBBackup(application.callModeBackupDirectory(), testCallModeBackup())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := filepath.Base(path)
+	requestBody := func(confirm bool) *bytes.Reader {
+		payload, marshalErr := json.Marshal(map[string]any{"confirm": confirm, "backup_id": id})
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		return bytes.NewReader(payload)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/call-mode/backups/delete", requestBody(false))
+	recorder := httptest.NewRecorder()
+	application.callModeBackupDeleteAPI(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unconfirmed status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("unconfirmed delete removed backup: %v", err)
+	}
+
+	application.callModeOperation = true
+	request = httptest.NewRequest(http.MethodPost, "/api/call-mode/backups/delete", requestBody(true))
+	recorder = httptest.NewRecorder()
+	application.callModeBackupDeleteAPI(recorder, request)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("busy status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("busy delete removed backup: %v", err)
+	}
+
+	application.callModeOperation = false
+	request = httptest.NewRequest(http.MethodPost, "/api/call-mode/backups/delete", requestBody(true))
+	recorder = httptest.NewRecorder()
+	application.callModeBackupDeleteAPI(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted backup still exists: %v", err)
 	}
 }

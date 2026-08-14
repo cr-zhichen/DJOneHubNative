@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -53,6 +54,7 @@ type callModeUSBBackupSummary struct {
 	UACEnabled    bool      `json:"uac_enabled"`
 	VoiceIncluded bool      `json:"voice_included"`
 	IMSConfigured bool      `json:"ims_configured"`
+	Imported      bool      `json:"imported"`
 	Valid         bool      `json:"valid"`
 	Restorable    bool      `json:"restorable"`
 	Detail        string    `json:"detail,omitempty"`
@@ -234,7 +236,9 @@ func validCallModeBackupID(id string) bool {
 		return false
 	}
 	if !strings.HasSuffix(id, ".json") ||
-		(!strings.HasPrefix(id, "usb-before-call-mode-") && !strings.HasPrefix(id, "usb-before-restore-")) {
+		(!strings.HasPrefix(id, "usb-before-call-mode-") &&
+			!strings.HasPrefix(id, "usb-before-restore-") &&
+			!strings.HasPrefix(id, "usb-imported-")) {
 		return false
 	}
 	for _, character := range id {
@@ -295,6 +299,7 @@ func callModeBackupSummary(id string, info os.FileInfo, payload []byte) callMode
 	summary.UACEnabled = backup.USB.hasUAC()
 	summary.VoiceIncluded = backup.Voice != nil
 	summary.IMSConfigured = backup.Voice != nil && backup.Voice.ready()
+	summary.Imported = strings.HasPrefix(id, "usb-imported-")
 	if err := validateCallModeUSBBackup(backup, false); err != nil {
 		summary.Detail = err.Error()
 		return summary
@@ -358,6 +363,127 @@ func (a *app) callModeBackupExportAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, id))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, id, info.ModTime(), bytes.NewReader(payload))
+}
+
+func writeImportedCallModeUSBBackup(directory string, payload []byte) (string, error) {
+	if len(payload) == 0 || int64(len(payload)) > callModeBackupMaximumSize {
+		return "", errors.New("备份文件为空或超过 64 KB")
+	}
+	backup, err := decodeCallModeUSBBackup(payload)
+	if err != nil {
+		return "", fmt.Errorf("解析备份：%w", err)
+	}
+	if err := validateCallModeUSBBackup(backup, false); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return "", err
+	}
+
+	identitySuffix := "legacy"
+	if validCallModeIMEI(backup.Module.IMEI) {
+		identitySuffix = backup.Module.IMEI[len(backup.Module.IMEI)-4:]
+	}
+	baseName := fmt.Sprintf(
+		"usb-imported-%s-%s",
+		time.Now().Format("20060102-150405.000000000"),
+		identitySuffix,
+	)
+	temporary, err := os.CreateTemp(directory, ".usb-import-*.tmp")
+	if err != nil {
+		return "", err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return "", err
+	}
+	if _, err := temporary.Write(payload); err != nil {
+		temporary.Close()
+		return "", err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return "", err
+	}
+	if err := temporary.Close(); err != nil {
+		return "", err
+	}
+
+	for index := 1; index <= 100; index++ {
+		fileName := baseName + ".json"
+		if index > 1 {
+			fileName = fmt.Sprintf("%s-%d.json", baseName, index)
+		}
+		path := filepath.Join(directory, fileName)
+		if err := os.Link(temporaryPath, path); err == nil {
+			return path, nil
+		} else if !errors.Is(err, os.ErrExist) {
+			return "", err
+		}
+	}
+	return "", errors.New("无法为导入备份分配唯一文件名")
+}
+
+func (a *app) callModeBackupImportAPI(w http.ResponseWriter, r *http.Request) {
+	reader := http.MaxBytesReader(w, r.Body, callModeBackupMaximumSize)
+	payload, err := io.ReadAll(reader)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "读取导入备份失败："+err.Error())
+		return
+	}
+	path, err := writeImportedCallModeUSBBackup(a.callModeBackupDirectory(), payload)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "导入备份失败："+err.Error())
+		return
+	}
+	storedPayload, info, err := readCallModeBackupFile(a.callModeBackupDirectory(), filepath.Base(path))
+	if err != nil {
+		_ = os.Remove(path)
+		writeError(w, http.StatusInternalServerError, "验证导入备份失败："+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"backup": callModeBackupSummary(filepath.Base(path), info, storedPayload),
+	})
+}
+
+func (a *app) callModeBackupDeleteAPI(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Confirm  bool   `json:"confirm"`
+		BackupID string `json:"backup_id"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !body.Confirm {
+		writeError(w, http.StatusBadRequest, "需要确认后才会删除配置备份")
+		return
+	}
+	body.BackupID = strings.TrimSpace(body.BackupID)
+	if _, _, err := readCallModeBackupFile(a.callModeBackupDirectory(), body.BackupID); err != nil {
+		writeError(w, http.StatusNotFound, "读取待删除备份失败："+err.Error())
+		return
+	}
+	a.callModeMu.RLock()
+	operationRunning := a.callModeOperation
+	a.callModeMu.RUnlock()
+	if operationRunning {
+		writeError(w, http.StatusConflict, "通话模式正在执行其他操作，不能删除配置备份")
+		return
+	}
+	if err := os.Remove(filepath.Join(a.callModeBackupDirectory(), body.BackupID)); err != nil {
+		writeError(w, http.StatusInternalServerError, "删除配置备份失败："+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted":   true,
+		"backup_id": body.BackupID,
+	})
 }
 
 func (a *app) callModeRestoreAPI(w http.ResponseWriter, r *http.Request) {
