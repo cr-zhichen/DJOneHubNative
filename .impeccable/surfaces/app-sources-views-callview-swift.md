@@ -27,9 +27,9 @@ Implementation grammar: system type ramp (`title2`, `headline`, `body/callout`, 
 | Number entry and call action | native `TextField` and `Button` | one obvious primary action |
 | Keypad | SwiftUI grid | 3x4 compact rectangular controls, not enlarged phone circles |
 | Recent calls | semantic SwiftUI rows | real data, direct callback, full history remains available |
-| Operational inspector | semantic SwiftUI rows/disclosures | four persistent readiness rows; details expand only where useful |
+| Operational inspector | semantic SwiftUI rows/disclosures | three persistent readiness rows; live audio remains in the call stage |
 | Imagery | none | generated comps are composition references, not shipped assets |
 
-Constraints: inherit DESIGN.md exactly; keyboard and VoiceOver access; no runtime bundling; original and relay source choices; hash verification; no automatic real call during setup; module restarts are explicit; restore requires matching IMEI and VID/PID, preserves schema-v2 USB-only semantics, and creates a fresh USB plus IMS/VoLTE safety backup before writing. Unknown call state remains locked until refreshed.
+Constraints: inherit DESIGN.md exactly; keyboard and VoiceOver access; no runtime bundling; original and relay source choices; hash verification; no automatic real call during setup; module restarts are explicit; restore requires matching IMEI and VID/PID, preserves schema-v2 USB-only semantics, and creates a fresh USB plus IMS/VoLTE safety backup before writing. Imported backups are validated before local storage, and deletion is confirmed. Unknown call state remains locked until refreshed.
 
 Unresolved: real operator VoLTE behavior and host audio quality require a coordinated live call after automated readiness checks pass.

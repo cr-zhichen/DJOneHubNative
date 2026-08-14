@@ -5,7 +5,7 @@ import SwiftUI
 /// 来电时固定在主屏幕右上角（最上层、不可拖动），不自动消失；
 /// 挂断、通话结束或点击卡片后收起。
 @MainActor
-final class IncomingCallCard {
+final class IncomingCallCard: ObservableObject {
     static let shared = IncomingCallCard()
 
     private var panel: NSPanel?
@@ -18,8 +18,8 @@ final class IncomingCallCard {
     private var previewHideTask: Task<Void, Never>?
 
     /// 卡片上显示的号码
-    var number: String = "未知号码"
-    var answerAvailable = false
+    @Published private(set) var number: String = "未知号码"
+    @Published private(set) var answerAvailable = false
 
     private init() {}
 
@@ -29,7 +29,7 @@ final class IncomingCallCard {
         self.store = store
         self.preview = preview
         self.number = store?.callStatus.number ?? "+8613800000000"
-        self.answerAvailable = store?.callModeStatus?.isReady == true
+        self.answerAvailable = preview || store?.callModeStatus?.isReady == true
         // 注销上一次的自动收起任务（手动关闭后再触发时不会提前收起）
         previewHideTask?.cancel()
         previewHideTask = nil
@@ -79,12 +79,11 @@ final class IncomingCallCard {
         stopRing()
         previewHideTask?.cancel()
         previewHideTask = nil
-        preview = false
         panel?.orderOut(nil)
     }
 
-    /// 挂断并收起
-    func hangup() {
+    /// 拒绝来电并收起
+    func reject() {
         if let store, !preview {
             store.hangup()
         }
@@ -94,28 +93,17 @@ final class IncomingCallCard {
     /// 接听后拉起通话页，让用户立即看到模块音频建立状态。
     func answer() {
         guard let store, !preview else {
-            openDetail()
+            openCallPage()
             return
         }
+        answerAvailable = false
+        openCallPage()
         store.answerCall()
-        store.showCallDetail = true
-        openDetail()
     }
 
-    /// 点击卡片/查看详情：拉起主窗口并弹出通话详情（预览模式也走同一路径）
-    func openDetail() {
-        if AppRuntimeConfiguration.usesModernSceneLifecycle {
-            MainWindowRequestCenter.shared.requestOpen()
-        } else {
-            NSApp.activate(ignoringOtherApps: true)
-            // 主窗口最小化时先还原
-            if let window = NSApp.windows.first(where: { $0.isMiniaturized }) {
-                window.deminiaturize(nil)
-            }
-        }
-        if let store {
-            store.showCallDetail = true
-        }
+    /// 点击来电信息区域：拉起唯一主窗口并直接进入通话页。
+    func openCallPage() {
+        MainWindowRequestCenter.shared.requestOpen(destination: .calls)
         hide()
     }
 
@@ -164,28 +152,14 @@ final class IncomingCallCard {
 
 /// 卡片内容
 struct IncomingCallCardContent: View {
-    let card: IncomingCallCard
+    @ObservedObject var card: IncomingCallCard
 
     var body: some View {
         VStack(spacing: 10) {
-            HStack {
+            VStack(alignment: .leading, spacing: 6) {
                 Label("来电", systemImage: "phone.fill")
                     .font(.callout.bold())
                     .foregroundStyle(.red)
-                Spacer()
-                Button {
-                    card.hide()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("收起卡片（不挂断）")
-            }
-
-            // 点击信息区域打开通话详情
-            VStack(alignment: .leading, spacing: 6) {
                 Text(card.number)
                     .font(.title2.bold())
                     .textSelection(.enabled)
@@ -193,16 +167,22 @@ struct IncomingCallCardContent: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture {
-                card.openDetail()
+                card.openCallPage()
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("打开 DJOneHub 通话界面")
+            .accessibilityAction {
+                card.openCallPage()
             }
 
             Divider()
 
             HStack(spacing: 8) {
                 Button {
-                    card.hangup()
+                    card.reject()
                 } label: {
-                    Label("挂断", systemImage: "phone.down.fill")
+                    Label("拒绝", systemImage: "phone.down.fill")
                 }
                 .buttonStyle(RedActionButtonStyle())
 
@@ -217,11 +197,6 @@ struct IncomingCallCardContent: View {
                 .tint(.green)
                 .disabled(!card.answerAvailable)
                 .help(card.answerAvailable ? "接听来电" : "请先在通话页完成通话模式准备")
-
-                Button("查看详情") {
-                    card.openDetail()
-                }
-                .buttonStyle(.bordered)
             }
         }
         .padding(14)

@@ -54,10 +54,12 @@ final class MainWindowRequestCenter: ObservableObject {
     static let shared = MainWindowRequestCenter()
 
     @Published private(set) var generation = 0
+    @Published private(set) var destination: AppSection?
 
     private init() {}
 
-    func requestOpen() {
+    func requestOpen(destination: AppSection? = nil) {
+        self.destination = destination
         generation &+= 1
     }
 }

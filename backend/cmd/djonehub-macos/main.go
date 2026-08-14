@@ -833,6 +833,8 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/call-mode/retry", a.callModeRetryAPI)
 	mux.HandleFunc("GET /api/call-mode/backups", a.callModeBackupsAPI)
 	mux.HandleFunc("GET /api/call-mode/backups/export", a.callModeBackupExportAPI)
+	mux.HandleFunc("POST /api/call-mode/backups/import", a.callModeBackupImportAPI)
+	mux.HandleFunc("POST /api/call-mode/backups/delete", a.callModeBackupDeleteAPI)
 	mux.HandleFunc("POST /api/call-mode/restore", a.callModeRestoreAPI)
 	mux.HandleFunc("POST /api/call/audio/start", a.callAudioStartAPI)
 	mux.HandleFunc("POST /api/call/audio/stop", a.callAudioStopAPI)

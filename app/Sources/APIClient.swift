@@ -51,6 +51,22 @@ struct APIClient {
         return data
     }
 
+    func upload<T: Decodable>(
+        _ path: String,
+        data: Data,
+        contentType: String = "application/json",
+        as type: T.Type = T.self
+    ) async throws -> T {
+        let url = Self.makeURL(path)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = data
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        let (responseData, response) = try await session.data(for: request)
+        try Self.validate(response, data: responseData)
+        return try decoder.decode(T.self, from: responseData)
+    }
+
     func send<T: Decodable>(
         _ path: String,
         method: String = "POST",

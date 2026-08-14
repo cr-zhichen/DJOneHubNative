@@ -522,12 +522,13 @@ struct CallModeUSBBackupSummary: Decodable, Identifiable, Equatable {
     let uacEnabled: Bool
     let voiceIncluded: Bool
     let imsConfigured: Bool
+    let imported: Bool
     let valid: Bool
     let restorable: Bool
     let detail: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, reason, flags, valid, restorable, detail, firmware
+        case id, reason, flags, imported, valid, restorable, detail, firmware
         case fileName = "file_name"
         case schemaVersion = "schema_version"
         case savedAt = "saved_at"
@@ -543,6 +544,20 @@ struct CallModeUSBBackupSummary: Decodable, Identifiable, Equatable {
 
 struct CallModeUSBBackupListResponse: Decodable {
     let backups: [CallModeUSBBackupSummary]
+}
+
+struct CallModeUSBBackupImportResponse: Decodable {
+    let backup: CallModeUSBBackupSummary
+}
+
+struct CallModeUSBBackupDeleteResponse: Decodable {
+    let deleted: Bool
+    let backupID: String
+
+    enum CodingKeys: String, CodingKey {
+        case deleted
+        case backupID = "backup_id"
+    }
 }
 
 struct CallModeEnableRequest: Encodable {
@@ -561,6 +576,16 @@ struct CallModeDownloadRequest: Encodable {
 }
 
 struct CallModeRestoreRequest: Encodable {
+    let confirm: Bool
+    let backupID: String
+
+    enum CodingKeys: String, CodingKey {
+        case confirm
+        case backupID = "backup_id"
+    }
+}
+
+struct CallModeBackupDeleteRequest: Encodable {
     let confirm: Bool
     let backupID: String
 
