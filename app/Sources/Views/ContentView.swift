@@ -7,6 +7,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case calls = "通话"
     case esim = "eSIM 卡片"
     case routing = "应用分流"
+    case ai = "AI 与 CLI"
     case debug = "调试与诊断"
     case about = "关于与更新"
 
@@ -19,6 +20,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .calls: return "phone.fill"
         case .esim: return "simcard.fill"
         case .routing: return "point.3.connected.trianglepath.dotted"
+        case .ai: return "lock.shield.fill"
         case .debug: return "terminal.fill"
         case .about: return "info.circle"
         }
@@ -31,6 +33,7 @@ struct ContentView: View {
     @EnvironmentObject private var smsStore: SMSStore
     @EnvironmentObject private var attentionStore: AttentionStore
     @EnvironmentObject private var updateChecker: UpdateChecker
+    @EnvironmentObject private var cliIntegration: CLIIntegrationManager
     @ObservedObject private var mainWindowRequests = MainWindowRequestCenter.shared
     @State private var selection: AppSection? = .home
     @State private var handledWindowRequest = 0
@@ -61,6 +64,8 @@ struct ContentView: View {
                 HomeView()
             case .about:
                 AboutView()
+            case .ai:
+                AIIntegrationView()
             default:
                 if backend.state == .running {
                     sectionView
@@ -90,6 +95,7 @@ struct ContentView: View {
             attentionStore.setViewingCalls(newValue == .calls)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            cliIntegration.refreshInstallationState()
             if selection == .sms, smsStore.viewingSMS {
                 attentionStore.markSMSViewed()
             }
@@ -140,6 +146,7 @@ struct ContentView: View {
         case .calls: CallView()
         case .esim: ESIMView()
         case .routing: TrafficRoutingView()
+        case .ai: AIIntegrationView()
         case .debug: DiagnosticsView()
         case .about: AboutView()
         }

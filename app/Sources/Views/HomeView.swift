@@ -5,6 +5,7 @@ struct HomeView: View {
     @EnvironmentObject private var backend: BackendProcess
     @EnvironmentObject private var store: DashboardStore
     @EnvironmentObject private var smsStore: SMSStore
+    @EnvironmentObject private var cliIntegration: CLIIntegrationManager
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var showingRebootConfirm = false
@@ -24,6 +25,10 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                if cliIntegration.cliUpdateAvailable {
+                    cliUpdateNotice
+                }
+
                 switch backend.state {
                 case .running:
                     if status != nil {
@@ -125,6 +130,40 @@ struct HomeView: View {
     }
 
     // MARK: - 顶部概览条
+
+    private var cliUpdateNotice: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("CLI 需要同步")
+                    .font(.callout.weight(.semibold))
+                Text("已安装 \(cliIntegration.installedCLIVersionText ?? "未知版本")，当前 App 内置 \(cliIntegration.bundledCLIVersionText)。同步后 AI 将使用与 App 配套的命令行工具。")
+                    .font(.caption)
+                    .foregroundStyle(Color.primary.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+
+            Spacer(minLength: 8)
+
+            Button("前往同步") {
+                MainWindowRequestCenter.shared.requestOpen(destination: .ai)
+            }
+            .controlSize(.small)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.orange.opacity(colorScheme == .dark ? 0.12 : 0.08)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.orange.opacity(0.35), lineWidth: 1))
+    }
 
     private var overviewBar: some View {
         HStack(spacing: 14) {

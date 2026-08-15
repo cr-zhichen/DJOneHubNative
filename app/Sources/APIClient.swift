@@ -37,6 +37,7 @@ struct APIClient {
         let url = Self.makeURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
+        Self.authorize(&request)
         let (data, response) = try await session.data(for: request)
         try Self.validate(response, data: data)
         return try decoder.decode(T.self, from: data)
@@ -46,6 +47,7 @@ struct APIClient {
         let url = Self.makeURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
+        Self.authorize(&request)
         let (data, response) = try await session.data(for: request)
         try Self.validate(response, data: data)
         return data
@@ -60,6 +62,7 @@ struct APIClient {
         let url = Self.makeURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        Self.authorize(&request)
         request.httpBody = data
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         let (responseData, response) = try await session.data(for: request)
@@ -76,6 +79,7 @@ struct APIClient {
         let url = Self.makeURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = method
+        Self.authorize(&request)
         if let body {
             request.httpBody = try encoder.encode(body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -89,6 +93,7 @@ struct APIClient {
         let url = Self.makeURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = method
+        Self.authorize(&request)
         if let body {
             request.httpBody = try encoder.encode(body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -110,6 +115,12 @@ struct APIClient {
             }
             throw APIError.httpStatus(http.statusCode)
         }
+    }
+
+    private static func authorize(_ request: inout URLRequest) {
+        request.setValue(
+            LocalBackendAuthentication.appToken,
+            forHTTPHeaderField: LocalBackendAuthentication.headerName)
     }
 
     private static func makeURL(_ path: String) -> URL {

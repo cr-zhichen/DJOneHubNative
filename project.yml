@@ -77,6 +77,9 @@ targets:
             GOARCH="$(goarch "$a")" go build -trimpath -ldflags="-s -w" \
               -o "${TARGET_TEMP_DIR}/backend/${a}/djonehubd" ./cmd/djonehub-macos
             GOARCH="$(goarch "$a")" go build -trimpath \
+              -ldflags="-linkmode external -extldflags=-mmacosx-version-min=13.0 -s -w -X main.version=${MARKETING_VERSION:-dev}" \
+              -o "${TARGET_TEMP_DIR}/backend/${a}/djonehub" ./cmd/djonehub-cli
+            GOARCH="$(goarch "$a")" go build -trimpath \
               -ldflags="-linkmode external -extldflags=-mmacosx-version-min=13.0 -s -w" \
               -o "${TARGET_TEMP_DIR}/backend/${a}/djonehub-routing-helper" ./cmd/djonehub-routing-helper
           done
@@ -93,6 +96,15 @@ targets:
             rm -f "${BACKEND_DIR}"/djonehubd.*
           else
             mv "${BACKEND_DIR}/djonehubd.${ARCHS}" "${BACKEND_DIR}/djonehubd"
+          fi
+          for a in ${ARCHS}; do
+            cp "${TARGET_TEMP_DIR}/backend/${a}/djonehub" "${BACKEND_DIR}/djonehub.${a}"
+          done
+          if [ "$(echo ${ARCHS} | wc -w)" -gt 1 ]; then
+            lipo -create "${BACKEND_DIR}"/djonehub.* -output "${BACKEND_DIR}/djonehub"
+            rm -f "${BACKEND_DIR}"/djonehub.*
+          else
+            mv "${BACKEND_DIR}/djonehub.${ARCHS}" "${BACKEND_DIR}/djonehub"
           fi
           for a in ${ARCHS}; do
             cp "${TARGET_TEMP_DIR}/backend/${a}/djonehub-routing-helper" "${BACKEND_DIR}/djonehub-routing-helper.${a}"
@@ -149,6 +161,7 @@ targets:
           for code in \
             "${BACKEND_DIR}/libusb-1.0.0.dylib" \
             "${BACKEND_DIR}/djonehubd" \
+            "${BACKEND_DIR}/djonehub" \
             "${BACKEND_DIR}/djonehub-routing-helper" \
             "${BACKEND_DIR}/sing-box"; do
             /usr/bin/codesign --force --sign - --timestamp=none "$code"

@@ -444,6 +444,11 @@ func listenWith(listen string, server *http.Server) (net.Listener, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := os.Chmod(sockPath, 0o600); err != nil {
+			_ = ln.Close()
+			_ = os.Remove(sockPath)
+			return nil, fmt.Errorf("secure unix socket: %w", err)
+		}
 		log.Printf("Listening on unix socket %s", sockPath)
 		return ln, nil
 	}
@@ -795,6 +800,7 @@ func (a *app) markUSBATDetached(reason string) {
 
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/agent/capabilities", a.agentCapabilities)
 	mux.HandleFunc("GET /api/health", a.health)
 	mux.HandleFunc("GET /api/status", a.status)
 	mux.HandleFunc("GET /api/sms", a.listSMS)
@@ -854,7 +860,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("PATCH /api/esim/profile", a.renameESIMProfile)
 	mux.HandleFunc("DELETE /api/esim/profile", a.deleteESIMProfile)
 	mux.HandleFunc("POST /api/esim/download", a.downloadESIMProfile)
-	return securityHeaders(mux)
+	return securityHeaders(a.agentAccessMiddleware(a.agentIdempotencyMiddleware(mux)))
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -1265,10 +1271,46 @@ func decodeUSBATPDU(header, pduHex string) (receivedSMS, smscodec.ConcatInfo, er
 	return receivedSMS{Sender: sender, Content: content, Timestamp: timestamp}, concat, nil
 }
 
-func (a *app) listSMS(w http.ResponseWriter, _ *http.Request) {
+func (a *app) listSMS(w http.ResponseWriter, r *http.Request) {
 	items := a.allSMS()
 	if items == nil {
 		items = []receivedSMS{}
+	}
+	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
+		for _, item := range items {
+			if item.ID == id {
+				writeJSON(w, http.StatusOK, item)
+				return
+			}
+		}
+		writeCodedError(w, http.StatusNotFound, "sms_not_found", "未找到指定短信", false)
+		return
+	}
+
+	metadataOnly := requestIsCLI(r) || strings.EqualFold(r.URL.Query().Get("view"), "metadata")
+	limit := len(items)
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeCodedError(w, http.StatusBadRequest, "invalid_limit", "limit 必须在 1 到 100 之间", false)
+			return
+		}
+		limit = min(limit, parsed)
+	}
+	items = items[:limit]
+	if metadataOnly {
+		metadata := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			metadata = append(metadata, map[string]any{
+				"id":          item.ID,
+				"sender":      item.Sender,
+				"timestamp":   item.Timestamp,
+				"direction":   item.Direction,
+				"has_content": item.Content != "",
+			})
+		}
+		writeJSON(w, http.StatusOK, metadata)
+		return
 	}
 	writeJSON(w, http.StatusOK, items)
 }
@@ -2479,6 +2521,10 @@ func (a *app) callDial(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "电话号码只能包含数字、开头的 +、* 和 #，且最长 32 位")
 		return
 	}
+	if state := a.currentCallState().State; state != "idle" {
+		writeCodedError(w, http.StatusConflict, "call_not_idle", "当前通话状态为 "+state+"，不能发起新的呼叫", true)
+		return
+	}
 	if err := a.callModeReadyForCall(); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -2511,6 +2557,10 @@ func validVoiceNumber(number string) bool {
 
 // POST /api/call/answer
 func (a *app) callAnswer(w http.ResponseWriter, _ *http.Request) {
+	if state := a.currentCallState().State; state != "incoming" {
+		writeCodedError(w, http.StatusConflict, "no_incoming_call", "当前通话状态为 "+state+"，没有可接听的来电", true)
+		return
+	}
 	if err := a.callModeReadyForCall(); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -2526,6 +2576,10 @@ func (a *app) callAnswer(w http.ResponseWriter, _ *http.Request) {
 
 // POST /api/call/hangup
 func (a *app) callHangup(w http.ResponseWriter, _ *http.Request) {
+	if state := a.currentCallState().State; state == "idle" {
+		writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "already_idle": true})
+		return
+	}
 	response, err := a.runATCommand("ATH", 10*time.Second)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())

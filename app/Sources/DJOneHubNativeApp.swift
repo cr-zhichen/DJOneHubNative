@@ -85,6 +85,7 @@ private final class AppDependencies: ObservableObject {
     let smsStore: SMSStore
     let attentionStore: AttentionStore
     let updateChecker: UpdateChecker
+    let cliIntegration: CLIIntegrationManager
 
     init() {
         let backend = BackendProcess.shared
@@ -93,6 +94,7 @@ private final class AppDependencies: ObservableObject {
         smsStore = .shared
         attentionStore = .shared
         updateChecker = .shared
+        cliIntegration = CLIIntegrationManager()
     }
 }
 
@@ -140,11 +142,13 @@ private struct DJOneHubMenuBarScene: Scene {
                 store: dependencies.store,
                 smsStore: dependencies.smsStore,
                 attentionStore: dependencies.attentionStore,
-                updateChecker: dependencies.updateChecker)
+                updateChecker: dependencies.updateChecker,
+                cliIntegration: dependencies.cliIntegration)
         } label: {
             MenuBarStatusLabel(
                 appDelegate: appDelegate,
                 attentionStore: dependencies.attentionStore,
+                cliIntegration: dependencies.cliIntegration,
                 store: dependencies.store)
         }
         .menuBarExtraStyle(.window)
@@ -162,6 +166,7 @@ private struct MainAppContent: View {
             .environmentObject(dependencies.smsStore)
             .environmentObject(dependencies.attentionStore)
             .environmentObject(dependencies.updateChecker)
+            .environmentObject(dependencies.cliIntegration)
             .frame(minWidth: 760, minHeight: 480)
             .onAppear {
                 appDelegate.bindDashboardStore(dependencies.store)
@@ -647,6 +652,7 @@ private struct MenuBarStatusLabel: View {
     @ObservedObject var appDelegate: AppDelegate
     @ObservedObject private var mainWindowRequests = MainWindowRequestCenter.shared
     @ObservedObject var attentionStore: AttentionStore
+    @ObservedObject var cliIntegration: CLIIntegrationManager
     @State private var handledWindowRequest = 0
     let store: DashboardStore
 
@@ -660,7 +666,11 @@ private struct MenuBarStatusLabel: View {
     }
 
     private var accessibilitySummary: String {
-        [presentation.accessibilitySummary, attentionStore.accessibilitySummary]
+        [
+            presentation.accessibilitySummary,
+            attentionStore.accessibilitySummary,
+            cliIntegration.cliUpdateAvailable ? "CLI 需要同步" : nil,
+        ]
             .compactMap { $0 }
             .joined(separator: "；")
     }
@@ -678,6 +688,13 @@ private struct MenuBarStatusLabel: View {
                 Text(title)
                     .font(.caption2)
                     .monospacedDigit()
+            }
+            if cliIntegration.cliUpdateAvailable {
+                Image(systemName: "arrow.down.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.orange)
+                    .font(.system(size: 12, weight: .semibold))
+                    .accessibilityHidden(true)
             }
             if let badgeImage = menuBarBadgeImage {
                 Image(nsImage: badgeImage)
@@ -752,6 +769,7 @@ private struct MenuBarDashboardPanel: View {
     @ObservedObject var smsStore: SMSStore
     @ObservedObject var attentionStore: AttentionStore
     @ObservedObject var updateChecker: UpdateChecker
+    @ObservedObject var cliIntegration: CLIIntegrationManager
 
     @AppStorage(MenuBarDisplayOptions.showSignalKey) private var menuBarShowSignal = false
     @AppStorage(MenuBarDisplayOptions.showDownloadKey) private var menuBarShowDownload = false
@@ -783,6 +801,7 @@ private struct MenuBarDashboardPanel: View {
                 Divider()
 
                 featureControlsSection
+                cliUpdateSection
                 updateSection
             }
             .padding(.horizontal, 12)
@@ -794,6 +813,7 @@ private struct MenuBarDashboardPanel: View {
         .frame(width: 224)
         .onAppear {
             appDelegate.bindDashboardStore(store)
+            cliIntegration.refreshInstallationState()
             autoLaunchEnabled = AutoLaunch.isEnabled
             if case .running = backend.state {
                 refreshRoutingStatus()
@@ -1036,6 +1056,41 @@ private struct MenuBarDashboardPanel: View {
             Task { await routingStore.refreshRuntime() }
         } else {
             routingStore.load()
+        }
+    }
+
+    @ViewBuilder
+    private var cliUpdateSection: some View {
+        if cliIntegration.cliUpdateAvailable {
+            Divider()
+
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("CLI 需要同步")
+                        .font(.callout)
+                        .lineLimit(1)
+                    Text("\(cliIntegration.installedCLIVersionText ?? "未知") → \(cliIntegration.bundledCLIVersionText)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "CLI 需要同步，已安装 \(cliIntegration.installedCLIVersionText ?? "未知版本")，App 内置 \(cliIntegration.bundledCLIVersionText)")
+
+                Spacer(minLength: 4)
+
+                Button("查看") {
+                    MainWindowRequestCenter.shared.requestOpen(destination: .ai)
+                    showMainWindow()
+                }
+                .controlSize(.small)
+            }
+            .padding(.vertical, 8)
         }
     }
 
