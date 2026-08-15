@@ -96,12 +96,14 @@ jobs:
             dist/DJOneHub-x86_64.app; do
             check_minos "$app/Contents/MacOS/DJOneHub"
             check_minos "$app/Contents/Resources/backend/djonehubd"
+            check_minos "$app/Contents/Resources/backend/djonehub"
             check_minos "$app/Contents/Resources/backend/djonehub-routing-helper"
             check_minos "$app/Contents/Resources/backend/sing-box"
             check_minos "$app/Contents/Resources/backend/libusb-1.0.0.dylib"
             codesign --verify --deep --strict --verbose=2 "$app"
             for code in \
               "$app/Contents/Resources/backend/djonehubd" \
+              "$app/Contents/Resources/backend/djonehub" \
               "$app/Contents/Resources/backend/djonehub-routing-helper" \
               "$app/Contents/Resources/backend/sing-box" \
               "$app/Contents/Resources/backend/libusb-1.0.0.dylib"; do

@@ -27,6 +27,7 @@ final class BackendProcess: ObservableObject {
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("DJOneHubNative", isDirectory: true)
         try? fm.createDirectory(at: support, withIntermediateDirectories: true)
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: support.path)
         socketPath = support.appendingPathComponent("djonehub.sock").path
         logURL = support.appendingPathComponent("djonehub.log")
 
@@ -49,6 +50,9 @@ final class BackendProcess: ObservableObject {
         let proc = Process()
         proc.executableURL = binary
         proc.arguments = ["-listen", "unix:\(socketPath)"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["DJONEHUB_APP_TOKEN"] = LocalBackendAuthentication.appToken
+        proc.environment = environment
 
         let outPipe = Pipe()
         let errPipe = Pipe()

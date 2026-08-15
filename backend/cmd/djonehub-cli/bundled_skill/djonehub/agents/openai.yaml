@@ -1,0 +1,4 @@
+interface:
+  display_name: "DJOneHub"
+  short_description: "安全读取设备状态并操作短信、通话、网络与 eSIM"
+  default_prompt: "使用 $djonehub 安全读取设备状态，并完成我已授权的通信操作。"
