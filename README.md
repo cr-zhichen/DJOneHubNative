@@ -105,3 +105,11 @@ API 模型与端点已通过无硬件环境自动验证（`app/Tests/APIProbe`�
 本项目的开发契机源于 [LINUX DO](https://linux.do/) 社区。在社区中了解到大疆第一代 4G 模块后，开始进行相关研究并开发 DJOneHub 的原生 macOS 版本。
 
 作者社区主页：[zgccrui](https://linux.do/u/zgccrui)
+
+## 致谢
+
+感谢以下项目及其贡献者：
+
+- DJOneHubNative 基于 [ZenGeekLabs/DJOneHub](https://github.com/ZenGeekLabs/DJOneHub) 开发，保留了其 Go 核心，并将原有 Web 界面重构为原生 SwiftUI 应用。
+- [iniwex5/vohive](https://github.com/iniwex5/vohive) 是 DJOneHub 的上游项目，本项目沿用了其中的核心实现与许可证声明。
+- 通话功能的实现参考了 [rogerbush007-a11y/DJOneHub-mac-enhanced](https://github.com/rogerbush007-a11y/DJOneHub-mac-enhanced) 提供的方案。
