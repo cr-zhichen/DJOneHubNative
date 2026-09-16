@@ -119,6 +119,7 @@ type app struct {
 
 	moduleVoiceMu       sync.Mutex
 	voiceUSBTransition  sync.RWMutex
+	moduleOperationMu   sync.RWMutex
 	moduleVoicePrepared bool
 	moduleVoiceRoute    bool
 
@@ -142,6 +143,13 @@ type app struct {
 
 	trafficMu        sync.Mutex
 	trafficBaselines map[string]networkByteCounters
+
+	// 模块定位：后端独占 GNSS 控制面，前端只读取结构化状态。
+	gpsMu           sync.RWMutex
+	gpsRefreshMu    sync.Mutex
+	gps             gpsRuntimeStatus
+	gpsPollInterval time.Duration
+	gpsCommand      func(string, time.Duration) (string, error)
 
 	// 分应用网络出口：配置默认关闭，运行时由独立页面显式启停。
 	routing *routingManager
@@ -387,6 +395,7 @@ func serve(instance *app, listen string) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go instance.startGPSPoller(ctx)
 
 	ln, err := listenWith(listen, server)
 	if err != nil {
@@ -793,6 +802,7 @@ func (a *app) markUSBATDetached(reason string) {
 	a.usbATBackoffUntil = time.Now().Add(2 * time.Second)
 	a.usbATBackoffErr = reason
 	a.resetModuleVoiceState()
+	a.markGPSUnavailable(reason)
 	if manager, _ := a.currentESIMManager(); manager != nil {
 		manager.NotifyModemReset()
 	}
@@ -817,6 +827,9 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/network", a.networkDiagnostic)
 	mux.HandleFunc("GET /api/network/traffic", a.networkTraffic)
 	mux.HandleFunc("POST /api/network/check-4g", a.check4GRoute)
+	mux.HandleFunc("GET /api/gps/status", a.gpsStatusAPI)
+	mux.HandleFunc("POST /api/gps/start", a.gpsStartAPI)
+	mux.HandleFunc("POST /api/gps/stop", a.gpsStopAPI)
 	mux.HandleFunc("GET /api/network/services", a.listNetworkServices)
 	mux.HandleFunc("PUT /api/network/services-order", a.setNetworkServicesOrder)
 	mux.HandleFunc("GET /api/routing", a.getRouting)
@@ -2803,6 +2816,8 @@ func (a *app) setUSBNetMode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "only usbnet mode 0 or 1 is allowed")
 		return
 	}
+	a.moduleOperationMu.Lock()
+	defer a.moduleOperationMu.Unlock()
 	command := fmt.Sprintf(`AT+QCFG="usbnet",%d`, body.Mode)
 	response, err := a.runATCommand(command, 8*time.Second)
 	if err != nil {
@@ -2817,6 +2832,8 @@ func (a *app) setUSBNetMode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) rebootModule(w http.ResponseWriter, _ *http.Request) {
+	a.moduleOperationMu.Lock()
+	defer a.moduleOperationMu.Unlock()
 	response, err := a.runATCommand("AT+CFUN=1,1", 3*time.Second)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -3535,6 +3552,8 @@ func (a *app) switchESIM(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusConflict, "esim_operation_busy", "已有 eSIM 操作正在进行，请等待完成后重试", true)
 		return
 	}
+	a.moduleOperationMu.Lock()
+	defer a.moduleOperationMu.Unlock()
 	a.updateESIMOperation(operation.ID, esimOperationStateRun, "switch", "正在向 eUICC 提交 Profile 切换…", 25)
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
@@ -3613,6 +3632,8 @@ func (a *app) renameESIMProfile(w http.ResponseWriter, r *http.Request) {
 	if a.rejectIfESIMOperationActive(w) {
 		return
 	}
+	a.moduleOperationMu.Lock()
+	defer a.moduleOperationMu.Unlock()
 	if err := esimManager.RenameProfile(body.ICCID, body.Name, body.AID); err != nil {
 		if errors.Is(err, esim.ErrOperationInProgress) {
 			writeCodedError(w, http.StatusConflict, "esim_operation_busy", "已有 eSIM 操作正在进行，请稍后重试", true)
@@ -3645,6 +3666,8 @@ func (a *app) deleteESIMProfile(w http.ResponseWriter, r *http.Request) {
 	if a.rejectIfESIMOperationActive(w) {
 		return
 	}
+	a.moduleOperationMu.Lock()
+	defer a.moduleOperationMu.Unlock()
 	result, err := esimManager.DeleteProfile(body.ICCID, body.AID)
 	if err != nil {
 		writeDeleteProfileError(w, err)
@@ -3683,6 +3706,8 @@ func (a *app) downloadESIMProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, a.currentESIMOperation())
 
 	go func(operationID string) {
+		a.moduleOperationMu.Lock()
+		defer a.moduleOperationMu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		result, err := esimManager.DownloadProfile(ctx, body.AID, body.SMDP, body.MatchingID, body.ConfirmationCode, body.IMEI, func(event esim.DownloadProgressEvent) {

@@ -105,6 +105,55 @@ struct DeviceStatus: Decodable {
     }
 }
 
+// MARK: - 模块定位
+
+enum GPSState: String, Decodable {
+    case checking
+    case disabled
+    case searching
+    case fixed
+    case stale
+    case unavailable
+    case unsupported
+    case error
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = GPSState(rawValue: rawValue) ?? .unknown
+    }
+}
+
+/// GET /api/gps/status，以及定位启停接口的响应模型。
+struct GPSStatus: Decodable, Equatable {
+    let supported: Bool?
+    let enabled: Bool
+    let state: GPSState
+    let latitude: Double?
+    let longitude: Double?
+    let altitude: Double?
+    let hdop: Double?
+    let fixType: Int?
+    let satellites: Int?
+    let utc: String?
+    let date: String?
+    let updatedAt: Date?
+    let checkedAt: Date?
+    let error: String?
+    let pollIntervalSeconds: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case supported, enabled, state, latitude, longitude, altitude, hdop
+        case fixType = "fix_type"
+        case satellites, utc, date
+        case updatedAt = "updated_at"
+        case checkedAt = "checked_at"
+        case error
+        case pollIntervalSeconds = "poll_interval_s"
+    }
+}
+
 // MARK: - 短信
 
 /// GET /api/sms：顶层是数组

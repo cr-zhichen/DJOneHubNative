@@ -636,8 +636,8 @@ func verifiedRuntimeBytes(directory string) int64 {
 
 func (a *app) beginCallModeOperation(status callModeStatus) bool {
 	a.callModeMu.Lock()
-	defer a.callModeMu.Unlock()
 	if a.callModeOperation {
+		a.callModeMu.Unlock()
 		return false
 	}
 	a.callModeOperation = true
@@ -651,6 +651,11 @@ func (a *app) beginCallModeOperation(status callModeStatus) bool {
 		status.LastRestore = a.callMode.LastRestore
 	}
 	a.callMode = status
+	a.callModeMu.Unlock()
+
+	// Wait for an in-flight GPS read to finish, then exclude all GPS traffic
+	// until the module configuration transaction has fully completed.
+	a.moduleOperationMu.Lock()
 	return true
 }
 
@@ -658,6 +663,7 @@ func (a *app) endCallModeOperation() {
 	a.callModeMu.Lock()
 	a.callModeOperation = false
 	a.callModeMu.Unlock()
+	a.moduleOperationMu.Unlock()
 }
 
 func (a *app) callModeSnapshot() callModeStatus {
