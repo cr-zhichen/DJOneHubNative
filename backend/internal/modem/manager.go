@@ -43,6 +43,7 @@ type commandRequest struct {
 	timeout      time.Duration
 	silent       bool
 	highPriority bool
+	beforeWrite  func() error
 
 	// 交互式模式支持
 	interactive bool   // 是否为交互式命令 (如发送短信)
@@ -631,6 +632,12 @@ func (m *Manager) runLoop() {
 
 // handleCommand 处理单个 AT 命令
 func (m *Manager) handleCommand(req commandRequest) {
+	if req.beforeWrite != nil {
+		if err := req.beforeWrite(); err != nil {
+			req.errChan <- err
+			return
+		}
+	}
 	startTime := time.Now()
 	logCmd := req.logCmd
 	if logCmd == "" {
@@ -1709,14 +1716,24 @@ func (m *Manager) ExecuteATHigh(cmd string, timeout time.Duration) (string, erro
 // remaining timeout/recovery diagnostics. The caller must provide a redacted
 // description that contains no credentials.
 func (m *Manager) ExecuteATSensitive(cmd, logCmd string, timeout time.Duration) (string, error) {
+	return m.ExecuteATSensitiveChecked(cmd, logCmd, timeout, nil)
+}
+
+// ExecuteATSensitiveChecked checks session-bound requests again when they leave
+// the serial queue. Neither timeout nor cancellation retries the command.
+func (m *Manager) ExecuteATSensitiveChecked(cmd, logCmd string, timeout time.Duration, beforeWrite func() error) (string, error) {
 	if strings.TrimSpace(logCmd) == "" {
 		logCmd = "AT+<redacted>"
 	}
-	return m.executeAT(cmd, logCmd, timeout, true, false)
+	return m.executeATChecked(cmd, logCmd, timeout, true, false, beforeWrite)
 }
 
 // executeAT 内部通用的 AT 命令执行逻辑
 func (m *Manager) executeAT(cmd, logCmd string, timeout time.Duration, silent, highPriority bool) (string, error) {
+	return m.executeATChecked(cmd, logCmd, timeout, silent, highPriority, nil)
+}
+
+func (m *Manager) executeATChecked(cmd, logCmd string, timeout time.Duration, silent, highPriority bool, beforeWrite func() error) (string, error) {
 	if !m.HasATPort() {
 		return "", errors.New("当前设备没有可用 AT 端口")
 	}
@@ -1735,6 +1752,7 @@ func (m *Manager) executeAT(cmd, logCmd string, timeout time.Duration, silent, h
 	req.timeout = timeout
 	req.silent = silent
 	req.highPriority = highPriority
+	req.beforeWrite = beforeWrite
 	req.interactive = false
 	req.waitPrompt = false
 	req.followUp = ""
@@ -1753,6 +1771,7 @@ func (m *Manager) executeAT(cmd, logCmd string, timeout time.Duration, silent, h
 		req.cmd = ""
 		req.logCmd = ""
 		req.followUp = ""
+		req.beforeWrite = nil
 		m.reqPool.Put(req)
 	}()
 

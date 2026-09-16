@@ -28,6 +28,33 @@ func TestSMSDryRunIsStructuredAndDoesNotNeedBackend(t *testing.T) {
 	}
 }
 
+func TestCallDialDryRunPreservesExtensionAndRequiresConfirmation(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	args := []string{"call", "dial", "--number", "+8613800138000,,123#", "--request-id", "call-extension-0001"}
+	if code := execute(context.Background(), append(args, "--dry-run"), &stdout, &stderr); code != 0 {
+		t.Fatalf("extension dry-run failed: code=%d stderr=%s", code, stderr.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("+8613800138000,,123#")) {
+		t.Fatalf("extension omitted from dry-run: %s", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := execute(context.Background(), args, &stdout, &stderr); code != 2 || !bytes.Contains(stderr.Bytes(), []byte("confirmation_required")) {
+		t.Fatalf("dial escaped confirmation: code=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestExtensionCannotBypassEmergencyOrSMSValidation(t *testing.T) {
+	for _, number := range []string{"110,1", "+112,,99", "911,#", "123,1;ATH"} {
+		if _, err := validateCallNumber(number); err == nil {
+			t.Errorf("call accepted restricted main number %q", number)
+		}
+	}
+	if _, err := validatePhone("+8613800138000,123"); err == nil {
+		t.Fatal("voice extension rules leaked into SMS validation")
+	}
+}
+
 func TestMutationRequiresExplicitConfirmation(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exitCode := execute(context.Background(), []string{

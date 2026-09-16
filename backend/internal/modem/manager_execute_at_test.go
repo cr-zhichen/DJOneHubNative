@@ -506,3 +506,52 @@ func TestManagerExecuteATSensitiveUsesRedactedLogCommandAndClearsPool(t *testing
 	}
 	m.reqPool.Put(pooled)
 }
+
+func TestSensitiveCommandCanceledAfterEnqueueDoesNotWrite(t *testing.T) {
+	m, err := New(config.DeviceConfig{ID: "dtmf-cancel", DeviceBackend: "at", ATPort: "/dev/ttyUSB6"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := &timeoutSerialPort{}
+	m.port, m.running, m.healthy = port, true, true
+	var canceled atomic.Bool
+	result := make(chan error, 1)
+	go func() {
+		_, err := m.ExecuteATSensitiveChecked(`AT+VTS="9"`, "AT+VTS=<redacted>", time.Second, func() error {
+			if canceled.Load() {
+				return errors.New("call canceled")
+			}
+			return nil
+		})
+		result <- err
+	}()
+	req := <-m.cmdChan
+	canceled.Store(true)
+	m.handleCommand(req)
+	if err := <-result; err == nil || err.Error() != "call canceled" {
+		t.Fatalf("queued cancel result = %v", err)
+	}
+	if writes := port.writes.Load(); writes != 0 {
+		t.Fatalf("canceled tone reached serial port: %d writes", writes)
+	}
+}
+
+func TestSensitiveDTMFTimeoutDoesNotResendCommand(t *testing.T) {
+	m, err := New(config.DeviceConfig{ID: "dtmf-timeout", DeviceBackend: "at", ATPort: "/dev/ttyUSB6"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := &timeoutSerialPort{}
+	m.port, m.running, m.healthy = port, true, true
+	req := commandRequest{
+		cmd: `AT+VTS="1",1`, logCmd: "AT+VTS=<redacted>", silent: true,
+		timeout: time.Millisecond, respChan: make(chan string, 1), errChan: make(chan error, 1),
+	}
+	m.handleCommand(req)
+	if err := <-req.errChan; err == nil {
+		t.Fatal("unanswered tone did not fail")
+	}
+	if writes := port.writes.Load(); writes != 2 {
+		t.Fatalf("want one command plus recovery ESC, got %d writes", writes)
+	}
+}

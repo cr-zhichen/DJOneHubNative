@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/iniwex5/vohive/internal/callnumber"
 )
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$`)
@@ -354,14 +356,14 @@ func callEventsCommand(ctx context.Context, options globalOptions, args []string
 
 func callDialCommand(ctx context.Context, options globalOptions, args []string) (commandResult, *commandError) {
 	set := newFlagSet("call dial")
-	number := set.String("number", "", "phone number")
+	number := set.String("number", "", "phone number, optionally followed by commas and extension digits (2 seconds per comma)")
 	requestID := set.String("request-id", "", "idempotency key")
 	dryRun := set.Bool("dry-run", false, "validate without dialing")
 	yes := set.Bool("yes", false, "confirm dialing")
 	if err := parseFlagSet(set, args); err != nil {
 		return commandResult{Command: "call.dial"}, err
 	}
-	phone, validationErr := validatePhone(*number)
+	phone, validationErr := validateCallNumber(*number)
 	if validationErr != nil {
 		return commandResult{Command: "call.dial"}, validationErr
 	}
@@ -649,6 +651,19 @@ func validatePhone(value string) (string, *commandError) {
 		return "", &commandError{Code: "emergency_number_blocked", Message: "the AI CLI cannot dial or message emergency numbers", ExitCode: 2}
 	}
 	return number, nil
+}
+
+func validateCallNumber(value string) (string, *commandError) {
+	plan, err := callnumber.Parse(value)
+	if err != nil {
+		return "", usageError(err.Error())
+	}
+	// Preserve the CLI's emergency-number and ordinary-number restrictions
+	// for the main number, independently of any extension suffix.
+	if _, validationErr := validatePhone(plan.Number); validationErr != nil {
+		return "", validationErr
+	}
+	return plan.Original, nil
 }
 
 func ensureRequestID(prefix, value string) (string, *commandError) {

@@ -183,6 +183,12 @@ func (u *usbAT) Close() {
 }
 
 func (u *usbAT) Command(cmd string, timeout time.Duration) (string, error) {
+	return u.CommandChecked(cmd, timeout, nil)
+}
+
+// CommandChecked validates session-bound work after acquiring the USB queue,
+// immediately before writing. A canceled DTMF request never leaves the host.
+func (u *usbAT) CommandChecked(cmd string, timeout time.Duration, beforeWrite func() error) (string, error) {
 	if u == nil {
 		return "", errors.New("USB AT device is not open")
 	}
@@ -204,6 +210,11 @@ func (u *usbAT) Command(cmd string, timeout time.Duration) (string, error) {
 	}
 
 	u.drainLocked()
+	if beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			return "", err
+		}
+	}
 	payload := []byte(cmd + "\r")
 	if err := u.bulkWriteLocked(u.endpointOut, payload, timeout); err != nil {
 		return "", err

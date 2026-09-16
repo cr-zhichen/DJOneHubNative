@@ -27,6 +27,7 @@ import (
 
 	"github.com/damonto/euicc-go/driver"
 	"github.com/iniwex5/vohive/internal/backend"
+	"github.com/iniwex5/vohive/internal/callnumber"
 	"github.com/iniwex5/vohive/internal/config"
 	"github.com/iniwex5/vohive/internal/esim"
 	"github.com/iniwex5/vohive/internal/modem"
@@ -130,8 +131,10 @@ type app struct {
 
 	// 通话记录：当前会话 + 持久化归档
 	callLog       *callLog
+	callControlMu sync.Mutex
 	callSessionMu sync.Mutex
 	callSession   *callSession
+	callCommand   func(command, redacted string, timeout time.Duration, beforeWrite func() error) (string, error)
 
 	profileNotesMu     sync.Mutex
 	profileNotes       map[string]profileNote
@@ -296,6 +299,7 @@ func main() {
 	manager.SetClipCallback(instance.onURCClip)
 	manager.SetHangupCallback(instance.onURCHangup)
 	manager.SetConnectCallback(instance.onURCConnect)
+	manager.SetOnDisconnectWithReason(func(string) { instance.onURCHangup() })
 	if err := manager.Start(); err != nil {
 		log.Fatalf("open modem on %s: %v", port, err)
 	}
@@ -378,6 +382,7 @@ func (a *app) installESIMManager(manager *esim.Manager, switchAllowed bool) bool
 }
 
 func serve(instance *app, listen string) {
+	defer instance.cancelCallTones()
 	if instance.routing != nil {
 		defer instance.routing.Close()
 	}
@@ -782,6 +787,7 @@ func (a *app) resetUSBATIfGone(err error) {
 // markUSBATDetached clears state belonging to a physically removed module.
 // A later status/SMS poll will discover and open a newly connected module.
 func (a *app) markUSBATDetached(reason string) {
+	a.onURCHangup()
 	if a.usbAT != nil {
 		log.Printf("USB AT bridge detached; waiting for a new enumeration: %s", reason)
 		a.usbAT.Close()
@@ -833,6 +839,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/call/dial", a.callDial)
 	mux.HandleFunc("POST /api/call/answer", a.callAnswer)
 	mux.HandleFunc("POST /api/call/hangup", a.callHangup)
+	mux.HandleFunc("POST /api/call/dtmf", a.callDTMF)
 	mux.HandleFunc("GET /api/call-mode/status", a.callModeStatusAPI)
 	mux.HandleFunc("POST /api/call-mode/enable", a.callModeEnableAPI)
 	mux.HandleFunc("POST /api/call-mode/download", a.callModeDownloadAPI)
@@ -1885,6 +1892,10 @@ func (a *app) runATCommand(command string, timeout time.Duration) (string, error
 // commands; the serial manager receives only the caller-provided redacted name
 // for timeout and recovery diagnostics.
 func (a *app) runSensitiveATCommand(command, redacted string, timeout time.Duration) (string, error) {
+	return a.runSensitiveATCommandChecked(command, redacted, timeout, nil)
+}
+
+func (a *app) runSensitiveATCommandChecked(command, redacted string, timeout time.Duration, beforeWrite func() error) (string, error) {
 	a.voiceUSBTransition.RLock()
 	if a.modem == nil {
 		if err := a.ensureUSBAT(); err != nil {
@@ -1895,14 +1906,14 @@ func (a *app) runSensitiveATCommand(command, redacted string, timeout time.Durat
 			a.voiceUSBTransition.RUnlock()
 			return "", errors.New("AT serial port is unavailable")
 		}
-		response, err := a.usbAT.Command(command, timeout)
+		response, err := a.usbAT.CommandChecked(command, timeout, beforeWrite)
 		a.voiceUSBTransition.RUnlock()
 		if err != nil {
 			a.resetUSBATIfGone(err)
 		}
 		return response, err
 	}
-	response, err := a.modem.ExecuteATSensitive(command, redacted, timeout)
+	response, err := a.modem.ExecuteATSensitiveChecked(command, redacted, timeout, beforeWrite)
 	a.voiceUSBTransition.RUnlock()
 	return response, err
 }
@@ -2174,21 +2185,38 @@ func (a *app) check4GRoute(w http.ResponseWriter, _ *http.Request) {
 
 // callRecord 一条通话记录
 type callRecord struct {
-	ID        string    `json:"id"`
-	Direction string    `json:"direction"` // in | out
-	Number    string    `json:"number,omitempty"`
-	Answered  bool      `json:"answered"` // 来电是否接听（未接 = 来电且未接听）
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at"`
-	Duration  int64     `json:"duration"` // 秒
+	ID         string    `json:"id"`
+	Direction  string    `json:"direction"` // in | out
+	Number     string    `json:"number,omitempty"`
+	DialString string    `json:"dial_string,omitempty"`
+	Answered   bool      `json:"answered"` // 来电是否接听（未接 = 来电且未接听）
+	StartedAt  time.Time `json:"started_at"`
+	EndedAt    time.Time `json:"ended_at"`
+	Duration   int64     `json:"duration"` // 秒
 }
 
 // callSession 当前进行中的通话会话
 type callSession struct {
-	direction string // in | out
-	number    string
-	startedAt time.Time
-	answered  bool
+	id             string
+	direction      string // in | out
+	number         string
+	dialString     string
+	startedAt      time.Time
+	answered       bool
+	active         bool
+	dialPending    bool
+	ctx            context.Context
+	cancel         context.CancelFunc
+	toneCtx        context.Context
+	toneCancel     context.CancelFunc
+	tonesBlocked   bool
+	moduleCallID   int
+	firstCLCCUntil time.Time
+	tones          chan callToneJob
+	postDial       string
+	postDialState  string
+	postDialError  string
+	postDialCancel context.CancelFunc
 }
 
 // callLog 通话记录归档：持久化到 Application Support 目录 JSON 文件
@@ -2266,7 +2294,7 @@ func (a *app) beginCall(direction, number string) {
 	if a.callSession != nil {
 		return
 	}
-	a.callSession = &callSession{direction: direction, number: number, startedAt: time.Now()}
+	a.callSession = a.newCallSession(direction, number)
 }
 
 // updateCallNumber 补全会话号码（+CLIP 晚于 RING 到达）
@@ -2289,20 +2317,32 @@ func (a *app) markCallAnswered() {
 
 // endCall 结束会话并写入通话记录（幂等）
 func (a *app) endCall() {
+	a.endCallIfCurrent(nil)
+}
+
+func (a *app) endCallIfCurrent(expected *callSession) {
 	a.callSessionMu.Lock()
 	sess := a.callSession
+	if expected != nil && sess != expected {
+		a.callSessionMu.Unlock()
+		return
+	}
 	a.callSession = nil
+	if sess != nil {
+		sess.cancel()
+	}
 	a.callSessionMu.Unlock()
 	if sess == nil || a.callLog == nil {
 		return
 	}
 	rec := callRecord{
-		ID:        fmt.Sprintf("%d-%s", sess.startedAt.UnixNano(), sess.direction),
-		Direction: sess.direction,
-		Number:    sess.number,
-		Answered:  sess.answered,
-		StartedAt: sess.startedAt,
-		EndedAt:   time.Now(),
+		ID:         sess.id,
+		Direction:  sess.direction,
+		Number:     sess.number,
+		DialString: sess.dialString,
+		Answered:   sess.answered,
+		StartedAt:  sess.startedAt,
+		EndedAt:    time.Now(),
 	}
 	rec.Duration = int64(rec.EndedAt.Sub(rec.StartedAt).Seconds())
 	a.callLog.add(rec)
@@ -2359,6 +2399,7 @@ type clccCall struct {
 	ID     int
 	Dir    int
 	Stat   int
+	Mode   int
 	Number string
 }
 
@@ -2375,6 +2416,7 @@ func parseCLCC(resp string) []clccCall {
 		call.ID, _ = strconv.Atoi(m[1])
 		call.Dir, _ = strconv.Atoi(m[2])
 		call.Stat, _ = strconv.Atoi(m[3])
+		call.Mode, _ = strconv.Atoi(m[4])
 		if len(m) > 6 {
 			call.Number = strings.Trim(m[6], `"`)
 		}
@@ -2385,63 +2427,89 @@ func parseCLCC(resp string) []clccCall {
 
 // callStateInfo 通话状态聚合
 type callStateInfo struct {
-	State    string `json:"state"` // idle | incoming | dialing | alerting | active
-	Number   string `json:"number,omitempty"`
-	Incoming bool   `json:"incoming"`
-	Active   bool   `json:"active"`
+	State         string `json:"state"` // idle | incoming | dialing | alerting | active
+	Number        string `json:"number,omitempty"`
+	Incoming      bool   `json:"incoming"`
+	Active        bool   `json:"active"`
+	SessionID     string `json:"session_id,omitempty"`
+	DTMFAvailable bool   `json:"dtmf_available"`
+	PostDialState string `json:"post_dial_state,omitempty"`
+	PostDialError string `json:"post_dial_error,omitempty"`
+	singleActive  bool
+	multipleCalls bool
+	moduleCallID  int
+	direction     string
 }
 
 func (a *app) currentCallState() callStateInfo {
-	resp, err := a.runATCommand("AT+CLCC", 3*time.Second)
-	if err != nil {
+	a.callControlMu.Lock()
+	defer a.callControlMu.Unlock()
+	return a.queryCallState()
+}
+
+// queryCallState is called with callControlMu held so old polls cannot replace
+// the state of a newly dialed call, or race a tone with our own ATH/ATD.
+func (a *app) queryCallState() (info callStateInfo) {
+	defer func() { info = a.withCallSession(info) }()
+	resp, err := a.runCallCommand("AT+CLCC", "", 3*time.Second)
+	if !a.callModeATCommandAccepted(resp, err) {
 		// CLCC 失败（模块忙等）时用 URC 缓存兜底
 		if info, ok := a.cachedURCCallState(); ok {
 			a.trackCallSession(info)
 			return info
 		}
+		a.trackCallSession(callStateInfo{State: "unknown"})
 		return callStateInfo{State: "unknown"}
 	}
-	calls := parseCLCC(resp)
+	var calls []clccCall
+	for _, call := range parseCLCC(resp) {
+		// Ignore disconnected/data rows and the empty active firmware residue
+		// before counting calls or choosing the identity of a live voice call.
+		if call.Mode == 0 && call.Stat <= 5 && (call.Stat != 0 || call.Number != "") {
+			calls = append(calls, call)
+		}
+	}
 	if len(calls) == 0 {
 		// CLCC 无通话条目但 URC 刚报告来电时兜底
 		if info, ok := a.cachedURCCallState(); ok {
 			a.trackCallSession(info)
 			return info
 		}
+		if info, ok := a.pendingOutgoingCallState(); ok {
+			return info
+		}
 		a.trackCallSession(callStateInfo{State: "idle"})
 		return callStateInfo{State: "idle"}
 	}
-	info := callStateInfo{}
-	anyLive := false
 	for _, call := range calls {
-		if call.Number != "" {
-			info.Number = call.Number
+		info = callStateInfo{Number: call.Number, moduleCallID: call.ID, direction: "out"}
+		if call.Dir == 1 {
+			info.direction = "in"
 		}
 		switch call.Stat {
 		case 4, 5: // incoming / waiting
 			info.State = "incoming"
 			info.Incoming = true
-			anyLive = true
 		case 2:
 			info.State = "dialing"
-			anyLive = true
 		case 3:
 			info.State = "alerting"
-			anyLive = true
+		case 1:
+			info.State = "held"
 		case 0:
-			// 无号码的 active 条目视为固件残留（ATH/CHUP 无法清除），不计入活跃通话
-			if call.Number == "" {
-				continue
-			}
 			info.State = "active"
 			info.Active = true
-			anyLive = true
+			info.singleActive = len(calls) == 1
+			info.Incoming = call.Dir == 1
 		}
-		// stat 6 = disconnected：不视为活跃通话
 	}
-	if !anyLive {
-		a.trackCallSession(callStateInfo{State: "idle"})
-		return callStateInfo{State: "idle"}
+	if len(calls) > 1 {
+		// A waiting/second call has no unambiguous DTMF target. Keep the
+		// existing session identity until a single call is observable again.
+		info.moduleCallID = 0
+		info.multipleCalls = true
+		a.updateCallToneState(info)
+		return info
 	}
 	a.trackCallSession(info)
 	return info
@@ -2450,6 +2518,7 @@ func (a *app) currentCallState() callStateInfo {
 // trackCallSession 根据轮询到的通话状态维护会话，保证通话记录不依赖 URC 回调。
 // beginCall/endCall 幂等，与 URC 回调（RING/NO CARRIER）同时启用也不会重复记录。
 func (a *app) trackCallSession(info callStateInfo) {
+	a.reconcileCallIdentity(info)
 	switch info.State {
 	case "incoming":
 		a.beginCall("in", info.Number)
@@ -2458,10 +2527,16 @@ func (a *app) trackCallSession(info callStateInfo) {
 		a.beginCall("out", info.Number)
 		a.updateCallNumber(info.Number)
 	case "active":
-		a.markCallAnswered()
+		direction := "out"
+		if info.Incoming {
+			direction = "in"
+		}
+		a.beginCall(direction, info.Number)
+		a.updateCallNumber(info.Number)
 	case "idle":
 		a.endCall()
 	}
+	a.updateCallToneState(info)
 }
 
 // GET /api/call/status
@@ -2516,12 +2591,14 @@ func (a *app) callDial(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "number is required")
 		return
 	}
-	body.Number = strings.TrimSpace(body.Number)
-	if !validVoiceNumber(body.Number) {
-		writeError(w, http.StatusBadRequest, "电话号码只能包含数字、开头的 +、* 和 #，且最长 32 位")
+	plan, err := callnumber.Parse(body.Number)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if state := a.currentCallState().State; state != "idle" {
+	a.callControlMu.Lock()
+	defer a.callControlMu.Unlock()
+	if state := a.queryCallState().State; state != "idle" {
 		writeCodedError(w, http.StatusConflict, "call_not_idle", "当前通话状态为 "+state+"，不能发起新的呼叫", true)
 		return
 	}
@@ -2529,35 +2606,24 @@ func (a *app) callDial(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	// 分号结尾表示语音呼叫
-	response, err := a.runATCommand("ATD"+body.Number+";", 10*time.Second)
+	err = a.placeCall(plan)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	a.beginCall("out", body.Number)
-	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "response": response})
+	writeJSON(w, http.StatusOK, map[string]any{"accepted": true})
 }
 
 func validVoiceNumber(number string) bool {
-	if number == "" || len(number) > 32 {
-		return false
-	}
-	for index, value := range number {
-		if value >= '0' && value <= '9' || value == '*' || value == '#' {
-			continue
-		}
-		if value == '+' && index == 0 {
-			continue
-		}
-		return false
-	}
-	return true
+	_, err := callnumber.Parse(number)
+	return err == nil
 }
 
 // POST /api/call/answer
 func (a *app) callAnswer(w http.ResponseWriter, _ *http.Request) {
-	if state := a.currentCallState().State; state != "incoming" {
+	a.callControlMu.Lock()
+	defer a.callControlMu.Unlock()
+	if state := a.queryCallState().State; state != "incoming" {
 		writeCodedError(w, http.StatusConflict, "no_incoming_call", "当前通话状态为 "+state+"，没有可接听的来电", true)
 		return
 	}
@@ -2565,9 +2631,9 @@ func (a *app) callAnswer(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	response, err := a.runATCommand("ATA", 10*time.Second)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+	response, err := a.runCallCommand("ATA", "", 10*time.Second)
+	if !a.callModeATCommandAccepted(response, err) {
+		writeError(w, http.StatusBadGateway, "模块未确认接听，请刷新通话状态")
 		return
 	}
 	a.markCallAnswered()
@@ -2576,13 +2642,22 @@ func (a *app) callAnswer(w http.ResponseWriter, _ *http.Request) {
 
 // POST /api/call/hangup
 func (a *app) callHangup(w http.ResponseWriter, _ *http.Request) {
-	if state := a.currentCallState().State; state == "idle" {
+	// Cancel before waiting for an in-flight AT command. No queued tone may
+	// overtake ATH, and comma pauses never hold the call or USB locks.
+	a.cancelCallTones()
+	a.callControlMu.Lock()
+	defer a.callControlMu.Unlock()
+	defer a.resumeManualCallTones()
+	if state := a.queryCallState().State; state == "idle" {
 		writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "already_idle": true})
 		return
 	}
-	response, err := a.runATCommand("ATH", 10*time.Second)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+	// A concurrent dial may have created a session while we waited for the
+	// control lock. Cancel that session too, even if ATH later fails.
+	a.cancelCallTones()
+	response, err := a.runCallCommand("ATH", "", 10*time.Second)
+	if !a.callModeATCommandAccepted(response, err) {
+		writeError(w, http.StatusBadGateway, "模块未确认挂断，请刷新通话状态")
 		return
 	}
 	// ATH 后模块通常也会发 NO CARRIER，endCall 幂等不会重复记录
