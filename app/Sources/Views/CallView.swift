@@ -235,6 +235,10 @@ struct CallView: View {
                 }
             }
             .padding(14)
+
+            Divider()
+            audioDeviceControls
+                .padding(14)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(
@@ -518,9 +522,7 @@ struct CallView: View {
             }
 
             if store.callStatus.isActive {
-                Label(
-                    store.audioRunning ? "Mac 与模块音频已连接" : "正在建立通话音频…",
-                    systemImage: store.audioRunning ? "waveform.circle.fill" : "waveform.circle")
+                Label(audioStatusText, systemImage: audioStatusIcon)
                     .font(.callout)
                     .foregroundStyle(store.audioRunning ? Color.green : Color.secondary)
             }
@@ -590,6 +592,80 @@ struct CallView: View {
             }
         }
         .frame(maxWidth: 280)
+    }
+
+    private var audioDeviceControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("通话音频")
+                .font(.callout.weight(.medium))
+            audioDevicePicker("麦克风", devices: store.callAudio.inputs,
+                              uid: store.callAudio.inputUID, savedName: store.callAudio.inputName,
+                              select: store.selectCallAudioInput)
+            audioDevicePicker("扬声器／耳机", devices: store.callAudio.outputs,
+                              uid: store.callAudio.outputUID, savedName: store.callAudio.outputName,
+                              select: store.selectCallAudioOutput)
+
+            if store.audioRunning,
+               let input = store.callAudio.activeInputName, let output = store.callAudio.activeOutputName {
+                Text("输入：\(input) · 输出：\(output)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Label("回声消除与自动增益已启用", systemImage: "waveform")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if store.callStatus.isActive, let message = store.callAudio.message {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("仅影响 DJOneHub，输入和输出可以使用不同设备。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if store.callStatus.isActive && (audioNeedsAttention || store.audioError != nil) {
+                Button("重新连接音频") { store.retryCallAudio() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func audioDevicePicker(_ title: String, devices: [CallAudioDevice], uid: String,
+                                   savedName: String, select: @escaping (String) -> Void) -> some View {
+        Picker(title, selection: Binding(get: { uid }, set: select)) {
+            Text("跟随系统默认").tag("")
+            if !uid.isEmpty && !devices.contains(where: { $0.uid == uid }) {
+                Text("\(savedName.isEmpty ? "已保存设备" : savedName)（未连接）").tag(uid)
+            }
+            ForEach(devices) { device in
+                Text(device.name).tag(device.uid)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help("仅改变 DJOneHub 的\(title)，不会更改系统默认设备。")
+    }
+
+    private var audioNeedsAttention: Bool {
+        store.callAudio.phase == .waitingForDevice || store.callAudio.phase == .failed
+    }
+
+    private var audioStatusText: String {
+        if store.audioRunning { return "Mac 与模块音频已连接" }
+        if store.audioError != nil { return "通话音频未连接" }
+        switch store.callAudio.phase {
+        case .waitingForDevice: return "音频暂停 · 等待设备连接"
+        case .failed: return "通话音频未连接"
+        case .idle, .connecting, .running: return "正在建立通话音频…"
+        }
+    }
+
+    private var audioStatusIcon: String {
+        if store.audioRunning { return "waveform.circle.fill" }
+        return audioNeedsAttention || store.audioError != nil ? "exclamationmark.circle" : "waveform.circle"
     }
 
     private func callErrorBanner(_ error: String) -> some View {

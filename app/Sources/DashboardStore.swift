@@ -94,6 +94,7 @@ final class DashboardStore: ObservableObject {
     @Published var dialNumber = ""
     @Published var audioError: String?
     @Published var audioRunning = false
+    @Published private(set) var callAudio = CallAudioState()
     private var observedCallModeRestoreAt: Date?
     /// 本次来电时间（用于详情展示）
     @Published var incomingAt: Date?
@@ -114,12 +115,20 @@ final class DashboardStore: ObservableObject {
     private var networkRecoveryTask: Task<Void, Never>?
     private var lastAutomaticNetworkRecoveryAt: Date?
     private var audioActivationTask: Task<Void, Never>?
+    private var audioActivationID: UUID?
+    private var audioStopTask: Task<Void, Never>?
+    private var audioModuleRouteStarted = false
 
     private static let moduleNetworkDisconnectedError = "4G 模块网卡未连接"
     private static let automaticNetworkRecoveryCooldown: TimeInterval = 10 * 60
 
     init(backend: BackendProcess) {
         self.backend = backend
+        AudioBridge.shared.observe { [weak self] state in
+            guard let self else { return }
+            self.callAudio = state
+            self.audioRunning = state.isRunning && self.audioModuleRouteStarted && self.callStatus.isActive
+        }
         backend.$state
             .receive(on: RunLoop.main)
             .sink { [weak self] state in
@@ -718,6 +727,7 @@ final class DashboardStore: ObservableObject {
         if status.sessionID != previous.sessionID || !status.isActive || status.dtmfAvailable != true {
             cancelDTMF()
         }
+        audioRunning = callAudio.isRunning && audioModuleRouteStarted && status.isActive
         // 新来电（从非来电变为来电）：弹出自定义通知卡片并响铃
         if status.isIncoming && !previous.isIncoming {
             incomingAt = Date()
@@ -832,9 +842,10 @@ final class DashboardStore: ObservableObject {
         voiceError = nil
         // 先停止主机 IO，模块侧路由由 /hangup 在 ATH 成功后清理，确保
         // voiceUSBTransition 不会让清理操作抢在挂断命令前面。
-        stopAudio(stopModuleRoute: false)
+        let audioStop = stopAudio(stopModuleRoute: false)
         Task {
             defer { callHangupInFlight = false }
+            await audioStop.value
             do {
                 let result: CallActionResult = try await APIClient().send("api/call/hangup")
                 if let warning = result.warning, !warning.isEmpty {
@@ -901,22 +912,36 @@ final class DashboardStore: ObservableObject {
     }
 
     private func startAudio() {
-        guard audioActivationTask == nil, !audioRunning else { return }
+        guard audioActivationTask == nil, !audioModuleRouteStarted else { return }
         guard callModeStatus?.isReady == true else {
             audioError = "通话已接通，但通话模式尚未就绪。请挂断后完成运行时准备。"
             return
         }
         audioError = nil
+        let activationID = UUID()
+        audioActivationID = activationID
         audioActivationTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.audioActivationTask = nil }
+            defer {
+                if self.audioActivationID == activationID {
+                    self.audioActivationTask = nil
+                    self.audioActivationID = nil
+                }
+            }
             do {
-                guard await AudioBridge.shared.requestMicrophoneAccess() else {
+                await self.audioStopTask?.value
+                try Task.checkCancellation()
+                let microphoneAllowed = await AudioBridge.shared.requestMicrophoneAccess()
+                try Task.checkCancellation()
+                guard microphoneAllowed else {
                     self.audioError = "麦克风权限未开启。请在系统设置“隐私与安全性 → 麦克风”中允许 DJOneHub。"
                     return
                 }
+                try Task.checkCancellation()
+                guard self.callStatus.isActive else { return }
                 let result: CallAudioStartResult = try await APIClient(timeoutInterval: 60)
                     .send("api/call/audio/start")
+                try Task.checkCancellation()
                 guard result.started else {
                     self.audioError = "模块没有确认通话音频路由已启动。"
                     return
@@ -927,39 +952,60 @@ final class DashboardStore: ObservableObject {
                         .send("api/call/audio/stop")
                     return
                 }
-                if let error = AudioBridge.shared.start() {
-                    self.audioError = error
-                    self.audioRunning = false
-                    let _: CallAudioStopResult? = try? await APIClient(timeoutInterval: 20)
-                        .send("api/call/audio/stop")
-                    return
-                }
-                self.audioRunning = true
+                self.audioModuleRouteStarted = true
+                // 主机设备暂不可用时保留模块路由，重连由 AudioBridge 负责。
+                // 不能用 audioRunning 判断模块是否启动，否则轮询会重复切换模块路由。
+                AudioBridge.shared.start()
             } catch is CancellationError {
                 // stopAudio 决定由普通停止接口还是 /hangup 负责模块侧清理，
                 // 避免两个清理请求与 ATH 竞争同一个 USB 过渡锁。
             } catch {
+                guard !Task.isCancelled, self.audioActivationID == activationID else { return }
                 self.audioError = "通话音频启动失败：\(error.localizedDescription)"
                 self.audioRunning = false
             }
         }
     }
 
-    func stopAudio(stopModuleRoute: Bool = true) {
-        let shouldStopModuleRoute = stopModuleRoute && (audioRunning || audioActivationTask != nil)
+    @discardableResult
+    func stopAudio(stopModuleRoute: Bool = true) -> Task<Void, Never> {
+        let shouldStopModuleRoute = stopModuleRoute && (audioModuleRouteStarted || audioActivationTask != nil)
         audioActivationTask?.cancel()
         audioActivationTask = nil
-        AudioBridge.shared.stop()
+        audioActivationID = nil
+        audioModuleRouteStarted = false
         audioRunning = false
-        if shouldStopModuleRoute, case .running = backend.state {
-            Task {
-                do {
-                    let _: CallAudioStopResult = try await APIClient(timeoutInterval: 20)
-                        .send("api/call/audio/stop")
-                } catch {
-                    audioError = "通话音频清理失败：\(error.localizedDescription)"
-                }
+        let previousStop = audioStopTask
+        let task = Task { [weak self] in
+            await previousStop?.value
+            await AudioBridge.shared.stop()
+            guard let self, shouldStopModuleRoute, case .running = self.backend.state else { return }
+            do {
+                let _: CallAudioStopResult = try await APIClient(timeoutInterval: 20)
+                    .send("api/call/audio/stop")
+            } catch {
+                self.audioError = "通话音频清理失败：\(error.localizedDescription)"
             }
+        }
+        audioStopTask = task
+        return task
+    }
+
+    func selectCallAudioInput(_ uid: String) {
+        AudioBridge.shared.selectInput(uid)
+    }
+
+    func selectCallAudioOutput(_ uid: String) {
+        AudioBridge.shared.selectOutput(uid)
+    }
+
+    func retryCallAudio() {
+        guard callStatus.isActive else { return }
+        audioError = nil
+        if audioModuleRouteStarted {
+            AudioBridge.shared.retry()
+        } else {
+            startAudio()
         }
     }
 
