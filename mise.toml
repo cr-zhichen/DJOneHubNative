@@ -1,6 +1,26 @@
 [tools]
 go = "1.26.3"
 
+[tasks."backend:format"]
+description = "格式化后端 Go 文件"
+dir = "backend"
+run = "gofmt -w cmd/djonehub-macos/call_dtmf*.go cmd/djonehub-macos/main.go cmd/djonehub-macos/usbat_darwin.go cmd/djonehub-macos/usbat_stub.go cmd/djonehub-cli/commands*.go cmd/djonehub-cli/schema.go internal/callnumber/*.go internal/modem/manager.go internal/modem/manager_execute_at_test.go"
+
+[tasks."backend:test"]
+description = "运行后端回归测试（不连接模块）"
+dir = "backend"
+run = "go test ./..."
+
+[tasks."backend:race"]
+description = "运行通话、CLI 与串口后端并发检查"
+dir = "backend"
+run = "go test -race ./cmd/djonehub-macos ./cmd/djonehub-cli ./internal/callnumber ./internal/modem"
+
+[tasks."backend:vet"]
+description = "静态检查后端"
+dir = "backend"
+run = "go vet ./..."
+
 [tasks.build]
 description = "用 Xcode 构建 .app 并输出到 dist/（本机架构）"
 dir = "."

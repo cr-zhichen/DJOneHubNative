@@ -62,7 +62,7 @@ struct CallHistoryView: View {
             }
             Button("取消", role: .cancel) {}
         } message: { record in
-            Text("号码：\(record.number ?? "未知号码")")
+            Text("号码：\(record.callbackNumber ?? "未知号码")")
         }
         .confirmationDialog("清空全部通话记录？", isPresented: $confirmClear) {
             Button("清空", role: .destructive) {
@@ -94,7 +94,7 @@ struct CallHistoryRow: View {
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(record.number ?? "未知号码")
+                Text(record.callbackNumber ?? "未知号码")
                     .font(.callout)
                     .textSelection(.enabled)
                 Text(record.startedAt.formatted(date: .abbreviated, time: .standard))

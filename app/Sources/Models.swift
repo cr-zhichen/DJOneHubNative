@@ -356,10 +356,32 @@ struct CallStatus: Decodable, Equatable {
     let number: String?
     let incoming: Bool?
     let active: Bool?
+    var sessionID: String? = nil
+    var dtmfAvailable: Bool? = nil
+    var postDialState: String? = nil
+    var postDialError: String? = nil
 
     var isIdle: Bool { state == "idle" }
     var isIncoming: Bool { state == "incoming" }
     var isActive: Bool { state == "active" }
+
+    enum CodingKeys: String, CodingKey {
+        case state, number, incoming, active
+        case sessionID = "session_id"
+        case dtmfAvailable = "dtmf_available"
+        case postDialState = "post_dial_state"
+        case postDialError = "post_dial_error"
+    }
+}
+
+struct CallDTMFRequest: Encodable {
+    let sessionID: String
+    let tone: String
+
+    enum CodingKeys: String, CodingKey {
+        case sessionID = "session_id"
+        case tone
+    }
 }
 
 struct CallDialRequest: Encodable {
@@ -387,6 +409,7 @@ struct CallRecord: Decodable, Identifiable {
     let id: String
     let direction: String
     let number: String?
+    let dialString: String?
     let answered: Bool
     let startedAt: Date
     let endedAt: Date
@@ -394,11 +417,13 @@ struct CallRecord: Decodable, Identifiable {
 
     var isIncoming: Bool { direction == "in" }
     var isMissed: Bool { isIncoming && !answered }
+    var callbackNumber: String? { dialString ?? number }
 
     enum CodingKeys: String, CodingKey {
         case id, direction, number, answered, duration
         case startedAt = "started_at"
         case endedAt = "ended_at"
+        case dialString = "dial_string"
     }
 }
 

@@ -85,6 +85,12 @@ final class DashboardStore: ObservableObject {
     @Published var callModeRestoreInFlight = false
     @Published var callStatus = CallStatus(state: "idle", number: nil, incoming: false, active: false)
     @Published var callAnswerInFlight = false
+    @Published private(set) var callHangupInFlight = false
+    @Published private(set) var dtmfPendingCount = 0
+    @Published private(set) var dtmfError: String?
+    private var dtmfQueue: [String] = []
+    private var dtmfTask: Task<Void, Never>?
+    private var dtmfGeneration = UUID()
     @Published var dialNumber = ""
     @Published var audioError: String?
     @Published var audioRunning = false
@@ -135,6 +141,8 @@ final class DashboardStore: ObservableObject {
     }
 
     private func reset() {
+        cancelDTMF()
+        callHangupInFlight = false
         networkRecoveryTask?.cancel()
         networkRecoveryTask = nil
         networkRecovering = false
@@ -707,6 +715,9 @@ final class DashboardStore: ObservableObject {
     private func updateCallStatus(_ status: CallStatus) {
         let previous = callStatus
         callStatus = status
+        if status.sessionID != previous.sessionID || !status.isActive || status.dtmfAvailable != true {
+            cancelDTMF()
+        }
         // 新来电（从非来电变为来电）：弹出自定义通知卡片并响铃
         if status.isIncoming && !previous.isIncoming {
             incomingAt = Date()
@@ -815,11 +826,15 @@ final class DashboardStore: ObservableObject {
     }
 
     func hangup() {
+        guard !callHangupInFlight else { return }
+        callHangupInFlight = true
+        cancelDTMF()
         voiceError = nil
         // 先停止主机 IO，模块侧路由由 /hangup 在 ATH 成功后清理，确保
         // voiceUSBTransition 不会让清理操作抢在挂断命令前面。
         stopAudio(stopModuleRoute: false)
         Task {
+            defer { callHangupInFlight = false }
             do {
                 let result: CallActionResult = try await APIClient().send("api/call/hangup")
                 if let warning = result.warning, !warning.isEmpty {
@@ -832,6 +847,57 @@ final class DashboardStore: ObservableObject {
                 pollCallStatus()
             }
         }
+    }
+
+    /// Enqueue on the main actor at click time; one task sends the keys in order.
+    /// The queue lives only for this call and never becomes part of its history.
+    func sendDTMF(_ tone: String) {
+        guard callStatus.isActive, callStatus.dtmfAvailable == true,
+              let sessionID = callStatus.sessionID, !callHangupInFlight else { return }
+        guard dtmfPendingCount < 32 else {
+            dtmfError = "待发送按键过多，请等待后再操作。"
+            return
+        }
+        dtmfError = nil
+        dtmfQueue.append(tone)
+        dtmfPendingCount += 1
+        guard dtmfTask == nil else { return }
+        let generation = dtmfGeneration
+        dtmfTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.dtmfGeneration == generation {
+                    self.dtmfTask = nil
+                    self.dtmfPendingCount = 0
+                }
+            }
+            while !self.dtmfQueue.isEmpty && !Task.isCancelled {
+                guard self.dtmfGeneration == generation,
+                      self.callStatus.sessionID == sessionID,
+                      self.callStatus.dtmfAvailable == true else { return }
+                let next = self.dtmfQueue.removeFirst()
+                do {
+                    let _: CallActionResult = try await APIClient(timeoutInterval: 15).send(
+                        "api/call/dtmf", body: CallDTMFRequest(sessionID: sessionID, tone: next))
+                    guard self.dtmfGeneration == generation else { return }
+                    self.dtmfPendingCount -= 1
+                } catch {
+                    guard self.dtmfGeneration == generation else { return }
+                    self.dtmfQueue.removeAll()
+                    self.dtmfError = "按键发送结果未确认，已停止后续按键。请根据对方提示确认后再操作。"
+                    return
+                }
+            }
+        }
+    }
+
+    private func cancelDTMF() {
+        dtmfGeneration = UUID()
+        dtmfTask?.cancel()
+        dtmfTask = nil
+        dtmfQueue.removeAll()
+        dtmfPendingCount = 0
+        dtmfError = nil
     }
 
     private func startAudio() {

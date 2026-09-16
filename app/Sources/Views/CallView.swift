@@ -248,6 +248,9 @@ struct CallView: View {
     private var dialerWorkbench: some View {
         VStack(alignment: .leading, spacing: 14) {
             numberEntry
+            Text("拨分机可输入“主号,分机”。接通后每个逗号暂停 2 秒，也可在通话中使用按键盘。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             responsiveDialerContent
         }
     }
@@ -298,6 +301,14 @@ struct CallView: View {
             .help("添加国际号码前缀")
             .accessibilityLabel("添加国际号码前缀")
 
+            Button(",") {
+                store.dialNumber.append(",")
+            }
+            .controlSize(.large)
+            .disabled(store.dialNumber.isEmpty)
+            .help("添加 2 秒暂停，之后输入分机号码")
+            .accessibilityLabel("添加两秒暂停")
+
             Button {
                 if !store.dialNumber.isEmpty {
                     store.dialNumber.removeLast()
@@ -314,32 +325,7 @@ struct CallView: View {
 
     private var keypad: some View {
         VStack(spacing: 10) {
-            Grid(horizontalSpacing: 8, verticalSpacing: 8) {
-                ForEach(0..<4, id: \.self) { row in
-                    GridRow {
-                        ForEach(0..<3, id: \.self) { column in
-                            let key = dialKeys[row * 3 + column]
-                            Button {
-                                store.dialNumber.append(key.symbol)
-                            } label: {
-                                VStack(spacing: 1) {
-                                    Text(key.symbol)
-                                        .font(.title3.monospacedDigit())
-                                    Text(key.letters.isEmpty ? " " : key.letters)
-                                        .font(.system(size: 8, weight: .medium))
-                                        .foregroundStyle(.secondary)
-                                        .tracking(0.7)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 38)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.bordered)
-                            .foregroundStyle(.primary)
-                            .accessibilityLabel("输入 \(key.symbol)")
-                        }
-                    }
-                }
-            }
+            dialKeyGrid(inCall: false)
 
             Button {
                 dial()
@@ -359,6 +345,40 @@ struct CallView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func dialKeyGrid(inCall: Bool) -> some View {
+        Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+            ForEach(0..<4, id: \.self) { row in
+                GridRow {
+                    ForEach(0..<3, id: \.self) { column in
+                        let key = dialKeys[row * 3 + column]
+                        Button {
+                            if inCall {
+                                store.sendDTMF(key.symbol)
+                            } else {
+                                store.dialNumber.append(key.symbol)
+                            }
+                        } label: {
+                            VStack(spacing: 1) {
+                                Text(key.symbol)
+                                    .font(.title3.monospacedDigit())
+                                Text(key.letters.isEmpty || (inCall && key.symbol == "0") ? " " : key.letters)
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .tracking(0.7)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 38)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.bordered)
+                        .foregroundStyle(.primary)
+                        .disabled(inCall && (store.callStatus.dtmfAvailable != true || store.callHangupInFlight))
+                        .accessibilityLabel(inCall ? "发送按键 \(key.symbol)" : "输入 \(key.symbol)")
+                    }
+                }
             }
         }
     }
@@ -404,7 +424,7 @@ struct CallView: View {
     }
 
     private func recentCallRow(_ record: CallRecord) -> some View {
-        let number = record.number?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let number = record.callbackNumber?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         return HStack(spacing: 10) {
             Image(systemName: recentCallIcon(record))
@@ -536,9 +556,40 @@ struct CallView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .disabled(store.callHangupInFlight)
+            }
+
+            if store.callStatus.isActive {
+                inCallKeypad
             }
         }
         .frame(maxWidth: .infinity, minHeight: 340)
+    }
+
+    private var inCallKeypad: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("通话按键")
+                .font(.headline)
+            dialKeyGrid(inCall: true)
+            if store.callStatus.postDialState == "sending" {
+                Label("正在发送分机，请稍候…", systemImage: "clock")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let error = store.dtmfError ?? store.callStatus.postDialError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else if store.dtmfPendingCount > 0 {
+                Text("待发送 \(store.dtmfPendingCount) 个按键")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("按键会发送给对方，用于分机和语音菜单。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: 280)
     }
 
     private func callErrorBanner(_ error: String) -> some View {
@@ -1128,6 +1179,7 @@ struct CallView: View {
         case "incoming": return "来电"
         case "dialing": return "正在拨号"
         case "alerting": return "等待接听"
+        case "held": return "通话保持中"
         case "unknown": return "状态未知"
         default: return "空闲"
         }
@@ -1279,17 +1331,17 @@ struct CallView: View {
 
     private func canRedial(_ record: CallRecord) -> Bool {
         guard callReady, store.callStatus.isIdle else { return false }
-        return !(record.number?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        return !(record.callbackNumber?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
     }
 
     private func redial(_ record: CallRecord) {
-        guard canRedial(record), let number = record.number else { return }
+        guard canRedial(record), let number = record.callbackNumber else { return }
         store.dialNumber = number
         store.dial(number)
     }
 
     private func redialHelp(_ record: CallRecord) -> String {
-        guard !(record.number?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else {
+        guard !(record.callbackNumber?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else {
             return "这条记录没有可拨打的号码"
         }
         if !callReady { return "请先完成通话模式准备" }

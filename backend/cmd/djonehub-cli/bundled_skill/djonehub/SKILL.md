@@ -43,6 +43,8 @@ description: 通过 DJOneHub macOS CLI 安全检查蜂窝模块，读取或发�
 - `djonehub call dial --number <number> --request-id <id> --dry-run`
 - `djonehub call answer --request-id <id> --dry-run`
 - `djonehub call hangup --request-id <id> --dry-run`
+
+`call dial --number` 支持带分机的拨号串，例如 `+8613800138000,,123#`。每个逗号在接通后暂停 2 秒，再发送后续按键；主号码的紧急号码限制保持不变。完整拨号串会保存在通话记录中，不要将密码或验证码放入拨号串。通话中即时按键仅由原生应用提供，CLI 没有 DTMF 权限；短信号码不支持逗号。
 - `djonehub esim switch --iccid <iccid> --request-id <id> --dry-run`
 
 遇到超时或结果不确定时，不得创建新的请求 ID 后盲目重试。使用同一个 ID 重试一次，然后通过短信列表、通话状态/记录或 eSIM 操作状态进行核对。挂断属于安全退出操作，不要求 `--yes`；获得授权后应始终保留该能力。
