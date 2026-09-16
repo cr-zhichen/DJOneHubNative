@@ -3,325 +3,639 @@ import CoreAudio
 import AudioToolbox
 import AVFoundation
 
-/// 语音通话音频桥：通话中实时路由音频（含重采样、声道与位深自适应）
-///  下行：模块 AC Interface（8kHz 输入）→ 重采样 → Mac 内置扬声器
-///  上行：Mac 内置麦克风 → 重采样 → 模块 AS Interface（8kHz 输出）
-final class AudioBridge {
+struct CallAudioDevice: Identifiable, Equatable {
+    let uid: String
+    let name: String
+    var id: String { uid }
+}
+
+struct CallAudioState: Equatable {
+    enum Phase: Equatable { case idle, connecting, running, waitingForDevice, failed }
+
+    var inputs: [CallAudioDevice] = []
+    var outputs: [CallAudioDevice] = []
+    // 空 UID 表示跟随系统；AudioDeviceID 只在本次枚举内使用。
+    var inputUID = ""
+    var outputUID = ""
+    var inputName = ""
+    var outputName = ""
+    var activeInputName: String?
+    var activeOutputName: String?
+    var phase: Phase = .idle
+    var message: String?
+    var isRunning: Bool { phase == .running }
+}
+
+private struct DeviceFormat: Equatable {
+    var sampleRate: Double
+    var channels: UInt32
+    var bits: UInt32 = 16
+    var isFloat = false
+    var isNonInterleaved = false
+    var isSupportedPCM = true
+}
+
+/// 生命周期和设备通知只在 controlQueue 上处理；实时回调只接触本次管线的样本。
+/// 下行：模块 UAC → VoiceProcessingIO 播放（回声参考）。
+/// 上行：同一 VoiceProcessingIO 的 AEC/AGC 麦克风 → 模块 UAC。
+// 可变状态全部由 controlQueue 隔离，发送到主线程的状态是值类型快照。
+final class AudioBridge: @unchecked Sendable {
     static let shared = AudioBridge()
 
-    private struct DeviceFormat {
-        var sampleRate: Double = 0
-        var channels: UInt32 = 0
-        var bits: UInt32 = 16
-        var isFloat = false
-        var isNonInterleaved = false
+    private struct Device: Equatable {
+        let id: AudioDeviceID
+        let uid: String
+        let name: String
+        let input: DeviceFormat?
+        let output: DeviceFormat?
+        let isModule: Bool
+        var option: CallAudioDevice { CallAudioDevice(uid: uid, name: name) }
     }
 
-    private var moduleInDeviceID: AudioDeviceID = 0    // AC Interface（模块输入，下行）
-    private var moduleOutDeviceID: AudioDeviceID = 0   // AS Interface（模块输出，上行）
-    private var speakerDeviceID: AudioDeviceID = 0
-    private var micDeviceID: AudioDeviceID = 0
-    private var running = false
-    private let stateLock = NSLock()
+    private struct Route: Equatable {
+        let moduleInput: Device
+        let moduleOutput: Device
+        let microphone: Device
+        let speaker: Device
+    }
+
+    private struct Listener {
+        let object: AudioObjectID
+        var address: AudioObjectPropertyAddress
+        let block: AudioObjectPropertyListenerBlock
+    }
+
     private struct IORegistration {
         let device: AudioDeviceID
         let procID: AudioDeviceIOProcID
         let context: UnsafeMutableRawPointer
     }
+
+    private struct BridgeError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    private let controlQueue = DispatchQueue(label: "com.djonehub.call-audio", qos: .userInitiated)
+    private let defaults = UserDefaults.standard
+    private var state = CallAudioState()
+    private var observer: ((CallAudioState) -> Void)?
+    private var devices: [Device] = []
+    private var listeners: [Listener] = []
+    private var watchedDevices = Set<AudioDeviceID>()
+    private var wantsAudio = false
+    private var engine: AVAudioEngine?
+    private var engineObserver: NSObjectProtocol?
     private var registrations: [IORegistration] = []
+    private var activeRoute: Route?
+    private var attemptedRoute: Route?
+    private var healthTimer: DispatchSourceTimer?
+    private var reconfigureWork: DispatchWorkItem?
 
-    // 音频管线状态（桥锁保护）
-    private var downInputBytes = Data()
-    private var upInputBytes = Data()
-    private var downOutputSamples: [Float32] = []
-    private var upOutputSamples: [Float32] = []
-    private var downResampler: FloatResampler?
-    private var upResampler: FloatResampler?
-    private var moduleInFormat = DeviceFormat()
-    private var moduleOutFormat = DeviceFormat()
-    private var speakerFormat = DeviceFormat()
-    private var micFormat = DeviceFormat()
-    private let bridgeLock = NSLock()
+    private init() {
+        state.inputUID = defaults.string(forKey: "callAudioInputUID") ?? ""
+        state.outputUID = defaults.string(forKey: "callAudioOutputUID") ?? ""
+        state.inputName = defaults.string(forKey: "callAudioInputName") ?? ""
+        state.outputName = defaults.string(forKey: "callAudioOutputName") ?? ""
+    }
 
-    var isRunning: Bool { stateLock.lock(); defer { stateLock.unlock() }; return running }
+    func observe(_ observer: @escaping (CallAudioState) -> Void) {
+        controlQueue.async {
+            self.observer = observer
+            if self.listeners.isEmpty {
+                for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice,
+                                 kAudioHardwarePropertyDefaultOutputDevice] {
+                    self.addListener(object: AudioObjectID(kAudioObjectSystemObject), selector: selector)
+                }
+            }
+            self.refreshDevices()
+            self.publish()
+        }
+    }
+
+    func selectInput(_ uid: String) {
+        controlQueue.async {
+            self.state.inputUID = uid
+            self.state.inputName = self.devices.first { $0.uid == uid }?.name ?? ""
+            self.defaults.set(uid, forKey: "callAudioInputUID")
+            self.defaults.set(self.state.inputName, forKey: "callAudioInputName")
+            self.selectionChanged()
+        }
+    }
+
+    func selectOutput(_ uid: String) {
+        controlQueue.async {
+            self.state.outputUID = uid
+            self.state.outputName = self.devices.first { $0.uid == uid }?.name ?? ""
+            self.defaults.set(uid, forKey: "callAudioOutputUID")
+            self.defaults.set(self.state.outputName, forKey: "callAudioOutputName")
+            self.selectionChanged()
+        }
+    }
+
+    private func selectionChanged() {
+        if wantsAudio {
+            // 切换只重建 Mac 管线，不重复改变模块路由，也不挂断蜂窝电话。
+            scheduleReconfigure()
+        } else {
+            publish()
+        }
+    }
 
     func requestMicrophoneAccess() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            return true
+        case .authorized: return true
         case .notDetermined:
             return await withCheckedContinuation { continuation in
-                AVCaptureDevice.requestAccess(for: .audio) { granted in
-                    continuation.resume(returning: granted)
-                }
+                AVCaptureDevice.requestAccess(for: .audio) { continuation.resume(returning: $0) }
             }
-        case .denied, .restricted:
-            return false
-        @unknown default:
-            return false
+        case .denied, .restricted: return false
+        @unknown default: return false
         }
     }
 
-    // MARK: - 设备发现
-
-    private var allDevices: [AudioDeviceID] {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else {
-            return []
+    func start() {
+        controlQueue.async {
+            self.wantsAudio = true
+            self.reconfigure()
         }
-        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
-        var devices = [AudioDeviceID](repeating: 0, count: count)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices) == noErr else {
-            return []
-        }
-        return devices
     }
 
-    private func deviceName(_ id: AudioDeviceID) -> String {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceNameCFString,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var unmanagedName: Unmanaged<CFString>?
+    func retry() {
+        controlQueue.async {
+            guard self.wantsAudio else { return }
+            self.reconfigure()
+        }
+    }
+
+    func stop() async {
+        await withCheckedContinuation { continuation in
+            controlQueue.async {
+                self.wantsAudio = false
+                self.reconfigureWork?.cancel()
+                self.reconfigureWork = nil
+                self.stopPipeline()
+                self.attemptedRoute = nil
+                self.state.phase = .idle
+                self.state.message = nil
+                self.publish()
+                // 调用者必须等主机 IO 释放后再发送 ATH/模块路由停止请求。
+                continuation.resume()
+            }
+        }
+    }
+
+    private func publish() {
+        let snapshot = state
+        let callback = observer
+        DispatchQueue.main.async { callback?(snapshot) }
+    }
+
+    // MARK: - 设备枚举和监听
+
+    private func stringProperty(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String {
+        var address = propertyAddress(selector)
+        var value: Unmanaged<CFString>?
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &unmanagedName) == noErr,
-              let unmanagedName else {
-            return ""
-        }
-        return unmanagedName.takeRetainedValue() as String
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr,
+              let value else { return "" }
+        return value.takeRetainedValue() as String
+    }
+
+    private func uintProperty(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> UInt32? {
+        var address = propertyAddress(selector)
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr else { return nil }
+        return value
+    }
+
+    private func propertyAddress(_ selector: AudioObjectPropertySelector,
+                                 scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
     }
 
     private func streamFormat(device: AudioDeviceID, scope: AudioObjectPropertyScope) -> DeviceFormat? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamFormat,
-            mScope: scope,
-            mElement: kAudioObjectPropertyElementMain)
+        guard hasChannels(device: device, scope: scope) else { return nil }
+        var address = propertyAddress(kAudioDevicePropertyStreamFormat, scope: scope)
         var format = AudioStreamBasicDescription()
         var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &format) == noErr else {
-            return nil
-        }
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &format) == noErr else { return nil }
         let isFloat = format.mFormatFlags & kLinearPCMFormatFlagIsFloat != 0
         let isSignedInteger = format.mFormatFlags & kLinearPCMFormatFlagIsSignedInteger != 0
         let isBigEndian = format.mFormatFlags & kLinearPCMFormatFlagIsBigEndian != 0
-        let supportedWidth = isFloat
-            ? [32, 64].contains(Int(format.mBitsPerChannel))
-            : [16, 32].contains(Int(format.mBitsPerChannel))
-        guard format.mFormatID == kAudioFormatLinearPCM,
-              format.mSampleRate > 0,
-              format.mChannelsPerFrame > 0,
-              supportedWidth,
-              (isFloat || isSignedInteger),
-              !isBigEndian else {
-            return nil
-        }
-        return DeviceFormat(
-            sampleRate: format.mSampleRate,
-            channels: format.mChannelsPerFrame,
-            bits: format.mBitsPerChannel,
-            isFloat: isFloat,
-            isNonInterleaved: format.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0)
+        let supportedWidth = isFloat ? [32, 64].contains(Int(format.mBitsPerChannel))
+                                     : [16, 32].contains(Int(format.mBitsPerChannel))
+        guard format.mSampleRate.isFinite, format.mSampleRate > 0, format.mChannelsPerFrame > 0 else { return nil }
+        let isSupportedPCM = format.mFormatID == kAudioFormatLinearPCM && supportedWidth
+            && (isFloat || isSignedInteger) && !isBigEndian
+        return DeviceFormat(sampleRate: format.mSampleRate, channels: format.mChannelsPerFrame,
+                            bits: format.mBitsPerChannel, isFloat: isFloat,
+                            isNonInterleaved: format.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0,
+                            isSupportedPCM: isSupportedPCM)
     }
 
-    func discoverDevices() -> (moduleIn: AudioDeviceID?, moduleOut: AudioDeviceID?, speaker: AudioDeviceID?, mic: AudioDeviceID?) {
-        var moduleIn: AudioDeviceID?
-        var moduleOut: AudioDeviceID?
-        var speaker: AudioDeviceID?
-        var mic: AudioDeviceID?
-
-        for device in allDevices {
-            let name = deviceName(device).lowercased()
-            if moduleOut == nil && name.contains("as interface") {
-                moduleOut = device
-                continue
-            }
-            if moduleIn == nil && (name.contains("ac interface") || name.contains("baiwang") || name.contains("quectel")) {
-                moduleIn = device
-                continue
-            }
-            if speaker == nil && (name.contains("speaker") || name.contains("扬声器")) {
-                speaker = device
-                continue
-            }
-            if mic == nil && (name.contains("microphone") || name.contains("麦克风")) {
-                mic = device
-                continue
-            }
-        }
-        // 兜底：系统默认输入作为麦克风
-        if mic == nil {
-            var address = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultInputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain)
-            var defaultID: AudioDeviceID = 0
-            var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-            if AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &defaultID) == noErr {
-                mic = defaultID
-            }
-        }
-        // 输出设备名称会随系统语言、外接显示器和用户默认设备变化；
-        // 名称匹配失败时使用系统默认输出，而不是误报“未找到内置扬声器”。
-        if speaker == nil {
-            var address = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain)
-            var defaultID: AudioDeviceID = 0
-            var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-            if AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &defaultID) == noErr {
-                speaker = defaultID
-            }
-        }
-        return (moduleIn, moduleOut, speaker, mic)
+    private func hasChannels(device: AudioDeviceID, scope: AudioObjectPropertyScope) -> Bool {
+        var address = propertyAddress(kAudioDevicePropertyStreamConfiguration, scope: scope)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr,
+              size >= MemoryLayout<AudioBufferList>.size else { return false }
+        let memory = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { memory.deallocate() }
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, memory) == noErr else { return false }
+        let buffers = memory.assumingMemoryBound(to: AudioBufferList.self)
+        return UnsafeMutableAudioBufferListPointer(buffers).contains { $0.mNumberChannels > 0 }
     }
 
-    // MARK: - 启动/停止
-
-    func start() -> String? {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard !running else { return nil }
-
-        let (moduleIn, moduleOut, speaker, mic) = discoverDevices()
-        guard let moduleIn, moduleIn != 0 else {
-            return "未找到模块音频输入设备（AC Interface）"
-        }
-        guard let moduleOut, moduleOut != 0 else {
-            return "未找到模块音频输出设备（AS Interface）"
-        }
-        guard let speaker, speaker != 0 else {
-            return "未找到内置扬声器"
-        }
-        guard let mic, mic != 0 else {
-            return "未找到内置麦克风"
-        }
-
-        moduleInDeviceID = moduleIn
-        moduleOutDeviceID = moduleOut
-        speakerDeviceID = speaker
-        micDeviceID = mic
-
-        guard let detectedModuleInFormat = streamFormat(device: moduleIn, scope: kAudioObjectPropertyScopeInput),
-              let detectedModuleOutFormat = streamFormat(device: moduleOut, scope: kAudioObjectPropertyScopeOutput),
-              let detectedSpeakerFormat = streamFormat(device: speaker, scope: kAudioObjectPropertyScopeOutput),
-              let detectedMicFormat = streamFormat(device: mic, scope: kAudioObjectPropertyScopeInput) else {
-            return "音频设备不是受支持的原生端序 16/32 位整数或 32/64 位浮点 PCM 格式"
-        }
-        moduleInFormat = detectedModuleInFormat
-        moduleOutFormat = detectedModuleOutFormat
-        speakerFormat = detectedSpeakerFormat
-        micFormat = detectedMicFormat
-
-        downResampler = FloatResampler(inRate: max(1, moduleInFormat.sampleRate), outRate: max(1, speakerFormat.sampleRate))
-        upResampler = FloatResampler(inRate: max(1, micFormat.sampleRate), outRate: max(1, moduleOutFormat.sampleRate))
-
-        guard registerIOProcs() else {
-            unregisterIOProcs()
-            return "音频设备注册失败"
-        }
-        running = true
-        return nil
+    private func deviceIDs() -> [AudioDeviceID] {
+        var address = propertyAddress(kAudioHardwarePropertyDevices)
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &ids) == noErr else { return [] }
+        return ids
     }
 
-    func stop() {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard running else { return }
-        unregisterIOProcs()
-        bridgeLock.lock()
-        downInputBytes.removeAll()
-        upInputBytes.removeAll()
-        downOutputSamples.removeAll()
-        upOutputSamples.removeAll()
-        downResampler = nil
-        upResampler = nil
-        bridgeLock.unlock()
-        running = false
+    private func refreshDevices() {
+        let ids = deviceIDs()
+        devices = ids.compactMap { id in
+            guard uintProperty(id, kAudioDevicePropertyDeviceIsAlive) == 1,
+                  uintProperty(id, kAudioDevicePropertyIsHidden) != 1 else { return nil }
+            let uid = stringProperty(id, kAudioDevicePropertyDeviceUID)
+            let name = stringProperty(id, kAudioObjectPropertyName)
+            let identity = "\(uid) \(name)".lowercased()
+            // VoiceProcessingIO 的内部聚合设备不是用户可选的麦克风/扬声器。
+            guard !uid.isEmpty, !identity.contains("voiceprocessing"),
+                  !identity.contains("vpau"), !identity.contains("vpio") else { return nil }
+            let isModule = ["ac interface", "as interface", "baiwang", "百旺", "quectel"].contains { identity.contains($0) }
+            return Device(id: id, uid: uid, name: name.isEmpty ? uid : name,
+                          input: streamFormat(device: id, scope: kAudioObjectPropertyScopeInput),
+                          output: streamFormat(device: id, scope: kAudioObjectPropertyScopeOutput), isModule: isModule)
+        }
+        devices.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        state.inputs = devices.filter { !$0.isModule && $0.input != nil }.map(\.option)
+        state.outputs = devices.filter { !$0.isModule && $0.output != nil }.map(\.option)
+        // 暂时 isAlive=0 的设备仍需监听，恢复时不一定会发生设备列表变更。
+        updateDeviceListeners(Set(ids))
     }
 
-    // MARK: - IOProc
+    private func addListener(object: AudioObjectID, selector: AudioObjectPropertySelector,
+                             scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) {
+        var address = propertyAddress(selector, scope: scope)
+        guard AudioObjectHasProperty(object, &address) else { return }
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.devicesChanged() }
+        guard AudioObjectAddPropertyListenerBlock(object, &address, controlQueue, block) == noErr else { return }
+        listeners.append(Listener(object: object, address: address, block: block))
+    }
 
-    private func registerIOProcs() -> Bool {
-        let registrations: [(AudioDeviceID, Int)] = [
-            (moduleInDeviceID, 0),    // 模块输入（下行数据源）
-            (moduleOutDeviceID, 1),   // 模块输出（上行目标）
-            (speakerDeviceID, 2),     // 扬声器（下行播放目标）
-            (micDeviceID, 3),         // 麦克风（上行数据源）
-        ]
-        for (device, role) in registrations {
+    private func updateDeviceListeners(_ current: Set<AudioDeviceID>) {
+        guard current != watchedDevices else { return }
+        for var listener in listeners where listener.object != AudioObjectID(kAudioObjectSystemObject) {
+            AudioObjectRemovePropertyListenerBlock(listener.object, &listener.address, controlQueue, listener.block)
+        }
+        listeners.removeAll { $0.object != AudioObjectID(kAudioObjectSystemObject) }
+        watchedDevices = current
+        for id in current {
+            addListener(object: id, selector: kAudioDevicePropertyDeviceIsAlive)
+            addListener(object: id, selector: kAudioDevicePropertyNominalSampleRate)
+            for scope in [kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput] {
+                addListener(object: id, selector: kAudioDevicePropertyStreamFormat, scope: scope)
+                addListener(object: id, selector: kAudioDevicePropertyStreamConfiguration, scope: scope)
+            }
+        }
+    }
+
+    private func devicesChanged() {
+        refreshDevices()
+        if wantsAudio && (try? resolveRoute()) != attemptedRoute {
+            scheduleReconfigure()
+        } else {
+            publish()
+        }
+    }
+
+    private func hostDevice(uid: String, isInput: Bool) throws -> Device {
+        let label = isInput ? "麦克风" : "扬声器／耳机"
+        let selectedName = isInput ? state.inputName : state.outputName
+        let device: Device?
+        if uid.isEmpty {
+            let selector = isInput ? kAudioHardwarePropertyDefaultInputDevice : kAudioHardwarePropertyDefaultOutputDevice
+            let id = uintProperty(AudioObjectID(kAudioObjectSystemObject), selector)
+            device = devices.first { $0.id == id }
+        } else {
+            device = devices.first { $0.uid == uid }
+        }
+        guard let device, !device.isModule, (isInput ? device.input : device.output) != nil else {
+            let name = selectedName.isEmpty ? label : selectedName
+            let reason = uid.isEmpty ? "系统默认\(label)不可用或指向模块音频接口" : "所选\(label)「\(name)」已断开或不可用"
+            throw BridgeError(message: "\(reason)。音频已暂停，重新连接或选择其他设备后恢复。")
+        }
+        return device
+    }
+
+    private func resolveRoute() throws -> Route {
+        let microphone = try hostDevice(uid: state.inputUID, isInput: true)
+        let speaker = try hostDevice(uid: state.outputUID, isInput: false)
+        guard let moduleInput = devices.first(where: { $0.isModule && $0.input != nil }) else {
+            throw BridgeError(message: "未找到模块音频输入设备（AC Interface）。音频已暂停，等待模块重新连接。")
+        }
+        guard let moduleOutput = devices.first(where: { $0.isModule && $0.output != nil }) else {
+            throw BridgeError(message: "未找到模块音频输出设备（AS Interface）。音频已暂停，等待模块重新连接。")
+        }
+        return Route(moduleInput: moduleInput, moduleOutput: moduleOutput, microphone: microphone, speaker: speaker)
+    }
+
+    // MARK: - 音频管线生命周期
+
+    private func scheduleReconfigure() {
+        reconfigureWork?.cancel()
+        // 立即停止旧设备，避免设备移除后继续显示运行或意外从其他输出播放。
+        stopPipeline()
+        state.phase = .connecting
+        state.message = "正在切换音频设备…"
+        publish()
+        let work = DispatchWorkItem { [weak self] in self?.reconfigure() }
+        reconfigureWork = work
+        controlQueue.asyncAfter(deadline: .now() + .milliseconds(250), execute: work)
+    }
+
+    private func reconfigure() {
+        guard wantsAudio else { return }
+        reconfigureWork?.cancel()
+        reconfigureWork = nil
+        stopPipeline()
+        refreshDevices()
+        let route: Route
+        do {
+            route = try resolveRoute()
+        } catch {
+            attemptedRoute = nil
+            state.phase = .waitingForDevice
+            state.message = error.localizedDescription
+            publish()
+            return
+        }
+        attemptedRoute = route
+        state.phase = .connecting
+        state.message = "正在建立通话音频…"
+        publish()
+        do {
+            try startPipeline(route)
+            // 启用 VoiceProcessingIO 后硬件格式可能改变，以最终格式作为监听基线。
+            refreshDevices()
+            let resolved = try resolveRoute()
+            guard resolved.microphone.id == route.microphone.id, resolved.speaker.id == route.speaker.id,
+                  resolved.moduleInput == route.moduleInput, resolved.moduleOutput == route.moduleOutput else {
+                // UAC 重新枚举/换格式时旧 IOProc 仍绑定旧设备；新路线必须实际重建。
+                scheduleReconfigure()
+                return
+            }
+            activeRoute = resolved
+            attemptedRoute = resolved
+            state.phase = .running
+            state.message = nil
+            state.activeInputName = route.microphone.name
+            state.activeOutputName = route.speaker.name
+            startHealthCheck()
+        } catch {
+            stopPipeline()
+            // 保存停止语音处理后的设备状态，忽略本次失败造成的格式通知，避免无限重试。
+            refreshDevices()
+            attemptedRoute = try? resolveRoute()
+            state.phase = .failed
+            state.message = "通话音频未连接：\(error.localizedDescription) 请重试或选择其他输入、输出设备。"
+        }
+        publish()
+    }
+
+    private func setDevice(_ id: AudioDeviceID, unit: AudioUnit, bus: AudioUnitElement) throws {
+        var device = id
+        let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                          kAudioUnitScope_Global, bus, &device, UInt32(MemoryLayout.size(ofValue: device)))
+        guard status == noErr else { throw BridgeError(message: "所选设备无法用于语音处理（\(status)）。") }
+    }
+
+    private func verifyDevice(_ expected: AudioDeviceID, unit: AudioUnit, bus: AudioUnitElement) throws {
+        var actual: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout.size(ofValue: actual))
+        let status = AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                          kAudioUnitScope_Global, bus, &actual, &size)
+        guard status == noErr, actual == expected else {
+            throw BridgeError(message: "语音处理未使用所选音频设备（\(status)），已停止音频以防意外外放。")
+        }
+    }
+
+    private func startPipeline(_ route: Route) throws {
+        guard let moduleInputFormat = route.moduleInput.input, let moduleOutputFormat = route.moduleOutput.output,
+              moduleInputFormat.isSupportedPCM, moduleOutputFormat.isSupportedPCM,
+              let voiceFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1) else {
+            throw BridgeError(message: "设备 PCM 音频格式不受支持。")
+        }
+        let engine = AVAudioEngine()
+        self.engine = engine
+        // 先启用，随后重新取得底层单元：切换 VoiceProcessing 会替换 I/O AudioUnit。
+        try engine.inputNode.setVoiceProcessingEnabled(true)
+        guard engine.inputNode.isVoiceProcessingEnabled, engine.outputNode.isVoiceProcessingEnabled,
+              let inputUnit = engine.inputNode.audioUnit, let outputUnit = engine.outputNode.audioUnit else {
+            throw BridgeError(message: "无法启用 macOS 回声消除。")
+        }
+        // VoiceProcessingIO 的 global bus 1 是采集设备，bus 0 是播放设备。
+        // 同一单元允许不同设备，不能通过全局系统默认设备实现应用内选择。
+        try setDevice(route.microphone.id, unit: inputUnit, bus: 1)
+        try setDevice(route.speaker.id, unit: outputUnit, bus: 0)
+        engine.inputNode.isVoiceProcessingBypassed = false
+        engine.inputNode.isVoiceProcessingAGCEnabled = true
+
+        let pipeline = AudioPipeline(moduleInput: moduleInputFormat, moduleOutput: moduleOutputFormat,
+                                     voice: DeviceFormat(sampleRate: voiceFormat.sampleRate, channels: 1,
+                                                         bits: 32, isFloat: true, isNonInterleaved: true))
+        let source = AVAudioSourceNode(format: voiceFormat) { isSilence, _, _, output in
+            isSilence.pointee = ObjCBool(!pipeline.renderDownstream(output))
+            return noErr
+        }
+        let sink = AVAudioSinkNode { _, _, input in
+            pipeline.captureMicrophone(input)
+            return noErr
+        }
+        engine.attach(source)
+        engine.attach(sink)
+        // VoiceProcessingIO 支持硬件采样率转换；两端客户端格式必须保持相同。
+        engine.connect(engine.inputNode, to: sink, format: voiceFormat)
+        engine.connect(source, to: engine.mainMixerNode, format: voiceFormat)
+        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: voiceFormat)
+        engine.prepare()
+        try engine.start()
+        try verifyDevice(route.microphone.id, unit: inputUnit, bus: 1)
+        try verifyDevice(route.speaker.id, unit: outputUnit, bus: 0)
+        guard engine.isRunning, !engine.inputNode.isVoiceProcessingBypassed,
+              engine.inputNode.isVoiceProcessingAGCEnabled else {
+            throw BridgeError(message: "macOS 语音处理未正常运行。")
+        }
+        try registerModuleIO(route, pipeline: pipeline)
+        engineObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange,
+                                                                object: engine, queue: nil) { [weak self, weak engine] _ in
+            self?.controlQueue.async { [weak self, weak engine] in
+                guard let self, let engine, self.engine === engine, self.wantsAudio else { return }
+                self.refreshDevices()
+                // 忽略启用语音处理本身的延迟通知，只重建已停止或设备已变化的管线。
+                if !engine.isRunning || (try? self.resolveRoute()) != self.attemptedRoute {
+                    self.scheduleReconfigure()
+                }
+            }
+        }
+    }
+
+    private func registerModuleIO(_ route: Route, pipeline: AudioPipeline) throws {
+        // 全双工模块只注册一次，避免同一个设备的两个 IOProc 互相覆盖输出。
+        for device in Set([route.moduleInput.id, route.moduleOutput.id]) {
+            let context = AudioIOContext(pipeline: pipeline, capture: device == route.moduleInput.id,
+                                         playback: device == route.moduleOutput.id)
+            let pointer = Unmanaged.passRetained(context).toOpaque()
             var procID: AudioDeviceIOProcID?
-            let context = UnsafeMutableRawPointer(Unmanaged.passRetained(BridgeContext(role: role)).toOpaque())
-            let err = AudioDeviceCreateIOProcID(device, { _, _, inInputData, _, outOutputData, _, inClientData -> OSStatus in
-                guard let inClientData else { return noErr }
-                let context = Unmanaged<BridgeContext>.fromOpaque(inClientData).takeUnretainedValue()
-                return AudioBridge.shared.ioProc(role: context.role, input: inInputData, output: outOutputData)
-            }, context, &procID)
-            if err != noErr {
-                Unmanaged<BridgeContext>.fromOpaque(context).release()
-                return false
+            let status = AudioDeviceCreateIOProcID(device, { _, _, input, _, output, _, pointer in
+                guard let pointer else { return noErr }
+                let context = Unmanaged<AudioIOContext>.fromOpaque(pointer).takeUnretainedValue()
+                context.pipeline.moduleIO(input: input, output: output, capture: context.capture, playback: context.playback)
+                return noErr
+            }, pointer, &procID)
+            guard status == noErr, let procID else {
+                Unmanaged<AudioIOContext>.fromOpaque(pointer).release()
+                throw BridgeError(message: "模块音频设备注册失败（\(status)）。")
             }
-            guard let procID else {
-                Unmanaged<BridgeContext>.fromOpaque(context).release()
-                return false
-            }
-            self.registrations.append(IORegistration(device: device, procID: procID, context: context))
-            if AudioDeviceStart(device, procID) != noErr {
-                return false
-            }
+            registrations.append(IORegistration(device: device, procID: procID, context: pointer))
+            let startStatus = AudioDeviceStart(device, procID)
+            guard startStatus == noErr else { throw BridgeError(message: "模块音频设备启动失败（\(startStatus)）。") }
         }
-        return true
     }
 
-    private func unregisterIOProcs() {
+    private func startHealthCheck() {
+        let timer = DispatchSource.makeTimerSource(queue: controlQueue)
+        timer.schedule(deadline: .now() + .seconds(2), repeating: .seconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.wantsAudio, let route = self.activeRoute else { return }
+            self.refreshDevices()
+            if (try? self.resolveRoute()) != route {
+                // 同时检查模块，避免 UAC 失效但主机引擎仍运行时出现无声假运行。
+                self.scheduleReconfigure()
+                return
+            }
+            do {
+                guard let engine = self.engine, engine.isRunning,
+                      engine.inputNode.isVoiceProcessingEnabled, !engine.inputNode.isVoiceProcessingBypassed,
+                      let input = engine.inputNode.audioUnit, let output = engine.outputNode.audioUnit else {
+                    throw BridgeError(message: "音频引擎已停止，请重新连接音频。")
+                }
+                try self.verifyDevice(route.microphone.id, unit: input, bus: 1)
+                try self.verifyDevice(route.speaker.id, unit: output, bus: 0)
+            } catch {
+                self.refreshDevices()
+                if (try? self.resolveRoute()) != route {
+                    // 健康检查可能早于硬件通知抵达；新路线必须真正重建，不能标为已尝试。
+                    self.scheduleReconfigure()
+                    return
+                }
+                self.stopPipeline()
+                self.refreshDevices()
+                self.attemptedRoute = try? self.resolveRoute()
+                self.state.phase = .failed
+                self.state.message = error.localizedDescription
+                self.publish()
+            }
+        }
+        healthTimer = timer
+        timer.resume()
+    }
+
+    private func stopPipeline() {
+        healthTimer?.cancel()
+        healthTimer = nil
+        if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
+        engineObserver = nil
+        engine?.stop()
+        engine = nil
         for registration in registrations.reversed() {
             AudioDeviceStop(registration.device, registration.procID)
             AudioDeviceDestroyIOProcID(registration.device, registration.procID)
-            Unmanaged<BridgeContext>.fromOpaque(registration.context).release()
+            Unmanaged<AudioIOContext>.fromOpaque(registration.context).release()
         }
         registrations.removeAll()
+        activeRoute = nil
+        state.activeInputName = nil
+        state.activeOutputName = nil
+        // 每次重建都创建独立 AudioPipeline，不让旧通话/旧设备样本进入新管线。
+    }
+}
+
+private final class AudioIOContext {
+    let pipeline: AudioPipeline
+    let capture: Bool
+    let playback: Bool
+
+    init(pipeline: AudioPipeline, capture: Bool, playback: Bool) {
+        self.pipeline = pipeline
+        self.capture = capture
+        self.playback = playback
+    }
+}
+
+private final class AudioPipeline {
+    private let moduleInput: DeviceFormat
+    private let moduleOutput: DeviceFormat
+    private let voice: DeviceFormat
+    private let downResampler: FloatResampler
+    private let upResampler: FloatResampler
+    private var downSamples: [Float32] = []
+    private var upSamples: [Float32] = []
+    private let lock = NSLock()
+
+    init(moduleInput: DeviceFormat, moduleOutput: DeviceFormat, voice: DeviceFormat) {
+        self.moduleInput = moduleInput
+        self.moduleOutput = moduleOutput
+        self.voice = voice
+        downResampler = FloatResampler(inRate: moduleInput.sampleRate, outRate: voice.sampleRate)
+        upResampler = FloatResampler(inRate: voice.sampleRate, outRate: moduleOutput.sampleRate)
     }
 
-    private func ioProc(role: Int, input: UnsafePointer<AudioBufferList>?, output: UnsafeMutablePointer<AudioBufferList>?) -> OSStatus {
-        bridgeLock.lock()
-        defer { bridgeLock.unlock() }
-
-        switch role {
-        case 0: // 模块输入：读下行（对方语音）
-            if let input {
-                appendBufferList(input, to: &downInputBytes)
-            }
-        case 1: // 模块输出：写上行（发给网络）
-            if let output {
-                let samples = takeSamples(from: &upInputBytes, format: micFormat, toMono: true)
-                let resampled = upResampler?.process(samples) ?? samples
-                upOutputSamples.append(contentsOf: resampled)
-                capSamples(&upOutputSamples, sampleRate: moduleOutFormat.sampleRate)
-                writeSamples(&upOutputSamples, format: moduleOutFormat, into: output)
-            }
-        case 2: // 扬声器：写下行（播放对方语音）
-            if let output {
-                let samples = takeSamples(from: &downInputBytes, format: moduleInFormat, toMono: true)
-                let resampled = downResampler?.process(samples) ?? samples
-                downOutputSamples.append(contentsOf: resampled)
-                capSamples(&downOutputSamples, sampleRate: speakerFormat.sampleRate)
-                writeSamples(&downOutputSamples, format: speakerFormat, into: output)
-            }
-        case 3: // 麦克风：读上行（我说话）
-            if let input {
-                appendBufferList(input, to: &upInputBytes)
-            }
-        default:
-            break
+    func moduleIO(input: UnsafePointer<AudioBufferList>?, output: UnsafeMutablePointer<AudioBufferList>?,
+                  capture: Bool, playback: Bool) {
+        if let output { silence(output) }
+        guard lock.try() else { return }
+        defer { lock.unlock() }
+        if capture, let input {
+            downSamples.append(contentsOf: downResampler.process(readSamples(input, format: moduleInput)))
+            capSamples(&downSamples, sampleRate: voice.sampleRate)
         }
-        return noErr
+        if playback, let output { writeSamples(&upSamples, format: moduleOutput, into: output) }
     }
 
-    // MARK: - 音频数据处理
+    func captureMicrophone(_ input: UnsafePointer<AudioBufferList>) {
+        guard lock.try() else { return }
+        defer { lock.unlock() }
+        upSamples.append(contentsOf: upResampler.process(readSamples(input, format: voice)))
+        capSamples(&upSamples, sampleRate: moduleOutput.sampleRate)
+    }
+
+    func renderDownstream(_ output: UnsafeMutablePointer<AudioBufferList>) -> Bool {
+        silence(output)
+        guard lock.try() else { return false }
+        defer { lock.unlock() }
+        let hasSamples = !downSamples.isEmpty
+        writeSamples(&downSamples, format: voice, into: output)
+        return hasSamples
+    }
+
+    private func silence(_ output: UnsafeMutablePointer<AudioBufferList>) {
+        for buffer in UnsafeMutableAudioBufferListPointer(output) {
+            if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
+        }
+    }
+
+    private func readSamples(_ input: UnsafePointer<AudioBufferList>, format: DeviceFormat) -> [Float32] {
+        var data = Data()
+        appendBufferList(input, to: &data)
+        return takeSamples(from: &data, format: format)
+    }
 
     private func appendBufferList(_ buffers: UnsafePointer<AudioBufferList>, to data: inout Data) {
         let pointer = UnsafeMutablePointer<AudioBufferList>(mutating: buffers)
@@ -340,8 +654,8 @@ final class AudioBridge {
         }
     }
 
-    /// 从字节缓冲读取样本（按格式位深/浮点解析，可选取单声道），返回 Float32
-    private func takeSamples(from data: inout Data, format: DeviceFormat, toMono: Bool) -> [Float32] {
+    /// 按设备位深解析为 Float32，通话取第一个声道。
+    private func takeSamples(from data: inout Data, format: DeviceFormat) -> [Float32] {
         // CoreAudio exposes non-interleaved channels as separate AudioBuffers;
         // appendBufferList intentionally keeps the first channel, so its byte
         // queue contains one sample per frame rather than all ASBD channels.
@@ -353,11 +667,9 @@ final class AudioBridge {
         guard usable > 0 else { return [] }
 
         var samples: [Float32] = []
-        samples.reserveCapacity(usable / bytesPerSample / (toMono ? channels : 1))
+        samples.reserveCapacity(usable / frameBytes)
         data.withUnsafeBytes { raw in
-            let total = usable / bytesPerSample
-            for i in 0..<total {
-                let offset = i * bytesPerSample
+            for offset in stride(from: 0, to: usable, by: frameBytes) {
                 var value: Float32 = 0
                 if format.isFloat {
                     if bytesPerSample == 4 {
@@ -372,13 +684,7 @@ final class AudioBridge {
                         value = Float32(raw.loadUnaligned(fromByteOffset: offset, as: Int32.self)) / 2147483648.0
                     }
                 }
-                if toMono && channels > 1 {
-                    if i % channels == 0 {
-                        samples.append(value)
-                    }
-                } else {
-                    samples.append(value)
-                }
+                samples.append(value)
             }
         }
         data.removeFirst(usable)
@@ -422,7 +728,7 @@ final class AudioBridge {
     }
 
     private func appendSample(_ sample: Float32, format: DeviceFormat, to data: inout Data) {
-        let clamped = max(-1, min(1, sample))
+        let clamped = sample.isFinite ? max(-1, min(1, Double(sample))) : 0
         let bytesPerSample = Int(format.bits) / 8
         if format.isFloat {
             if bytesPerSample == 4 {
@@ -433,10 +739,10 @@ final class AudioBridge {
                 withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }
             }
         } else if bytesPerSample == 2 {
-            var value = Int16(clamped * 32767.0)
+            var value = Int16(clamping: Int64((clamped * Double(Int16.max)).rounded()))
             withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }
         } else if bytesPerSample == 4 {
-            var value = Int32(clamped * 2147483647.0)
+            var value = Int32(clamping: Int64((clamped * Double(Int32.max)).rounded()))
             withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }
         }
     }
@@ -475,18 +781,11 @@ final class FloatResampler {
             out.append(Float32(a + (b - a) * frac))
             position += ratio
         }
-        let consumed = Int(position)
+        let consumed = min(Int(position), buffer.count)
         if consumed > 0 {
-            buffer.removeFirst(min(consumed, buffer.count))
+            buffer.removeFirst(consumed)
             position -= Double(consumed)
         }
         return out
-    }
-}
-
-private final class BridgeContext {
-    let role: Int
-    init(role: Int) {
-        self.role = role
     }
 }

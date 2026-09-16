@@ -82,3 +82,7 @@ run = [
 description = "清理 build/ 与 dist/"
 dir = "."
 run = "rm -rf build dist"
+
+[tasks."audio:probe"]
+description = "离线验证音频 PCM、重采样、设备枚举与停止屏障（不启动通话）"
+run = "bash scripts/probe-call-audio.sh"
