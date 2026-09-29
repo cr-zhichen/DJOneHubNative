@@ -18,23 +18,11 @@ import (
 	"unsafe"
 )
 
-const (
-	djiUSBVendorID  = 0x2ca3
-	djiUSBProductID = 0x4006
-	// 备用 ID：配置变更后模块可能以 Quectel 默认 ID 枚举（用于恢复 DJI 定制 ID）
-	quectelUSBVendorID  = 0x2c7c
-	quectelUSBProductID = 0x0125
-)
-
-// usbDeviceID 模块可能的 USB 枚举 ID 组合，按优先级尝试
-var usbDeviceIDs = [][2]uint16{
-	{djiUSBVendorID, djiUSBProductID},
-	{quectelUSBVendorID, quectelUSBProductID},
-}
-
 type usbAT struct {
 	ctx         *C.libusb_context
 	handle      *C.libusb_device_handle
+	vendorID    uint16
+	productID   uint16
 	iface       int
 	endpointIn  byte
 	endpointOut byte
@@ -63,6 +51,7 @@ func openDJIUSBAT() (*usbAT, error) {
 		}
 		dev, err := probeUSBATHandle(ctx, handle)
 		if err == nil {
+			dev.vendorID, dev.productID = ids[0], ids[1]
 			return dev, nil
 		}
 		lastErr = fmt.Errorf("device %04x:%04x: %w", ids[0], ids[1], err)
@@ -344,8 +333,8 @@ func (u *usbAT) Description() string {
 	if u == nil {
 		return "USB AT"
 	}
-	return fmt.Sprintf("USB AT · 2ca3:4006 interface %d out 0x%02x in 0x%02x",
-		u.iface, u.endpointOut, u.endpointIn)
+	return fmt.Sprintf("USB AT · %04x:%04x interface %d out 0x%02x in 0x%02x",
+		u.vendorID, u.productID, u.iface, u.endpointOut, u.endpointIn)
 }
 
 func (u *usbAT) bulkWriteLocked(endpoint byte, payload []byte, timeout time.Duration) error {
