@@ -17,11 +17,11 @@
 
 ## 2. USB ID 恢复手册（重要排错经验）
 
-**事故背景**：执行 `AT+QCFG="usbcfg",0x2C7C,0x0125,...,1`（开启 UAC 时误传 Quectel 默认 VID/PID）会把模块枚举 ID 从 `2ca3:4006` 改为 `2c7c:0125`，导致 DJOneHub 检测不到模块（"未检测到模块"）。
+**事故背景**：执行 `AT+QCFG="usbcfg",0x2C7C,0x0125,...,1`（开启 UAC 时误传 Quectel 默认 VID/PID）会把模块枚举 ID 从 `2ca3:4006` 改为 `2c7c:0125`，旧版设备状态检测会因此显示“未检测到模块”。当前设备发现、AT 与 ADB 共用 `usb_identity.go` 中的候选 ID，支持保留 `2c7c:0125` 使用，无需恢复出厂 ID；通话接口配置也保留当前 VID/PID。
 
 **恢复流程**（需要先能连上 AT 通道）：
 
-1. 让后端兼容备用 ID：`openDJIUSBAT` 按候选列表尝试 `2ca3:4006` 与 `2c7c:0125`（本项目已实现，`usbat_darwin.go` 的 `usbDeviceIDs`）
+1. 让后端兼容备用 ID：`openDJIUSBAT` 按候选列表尝试 `2ca3:4006` 与 `2c7c:0125`（本项目已实现，`usb_identity.go` 的 `usbDeviceIDs`）。以下仅用于主动恢复出厂 ID，不是使用本应用的前提。
 2. 连上后执行：
    ```
    AT+QCFG="usbcfg",0x2CA3,0x4006,1,1,1,1,1,0,0

@@ -516,12 +516,21 @@ func discoverDJIUSBDevice() *usbDeviceStatus {
 	if err != nil {
 		return nil
 	}
+	return parseDJIUSBDevice(string(out))
+}
 
+func parseDJIUSBDevice(output string) *usbDeviceStatus {
 	var device *usbDeviceStatus
-	for _, block := range strings.Split(string(out), "\n\n") {
+	for _, block := range strings.Split(output, "\n\n") {
 		vendorID, okVendor := intProperty(block, "idVendor")
 		productID, okProduct := intProperty(block, "idProduct")
-		if !okVendor || !okProduct || vendorID != 0x2ca3 {
+		if !okVendor || !okProduct || !supportedUSBDevice(vendorID, productID) {
+			continue
+		}
+		// Do not merge interfaces from another connected module.
+		if device != nil && (device.VendorID != fmt.Sprintf("%04x", vendorID) ||
+			device.ProductID != fmt.Sprintf("%04x", productID) ||
+			device.LocationID != formatHexProperty(block, "locationID")) {
 			continue
 		}
 		if device == nil {
@@ -539,6 +548,9 @@ func discoverDJIUSBDevice() *usbDeviceStatus {
 			}
 			if strings.TrimSpace(device.Vendor) == "" {
 				device.Vendor = "DJI"
+				if vendorID == quectelUSBVendorID {
+					device.Vendor = "Quectel"
+				}
 			}
 		}
 		ifaceNumber, okIface := intProperty(block, "bInterfaceNumber")
