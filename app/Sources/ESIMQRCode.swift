@@ -160,7 +160,7 @@ struct ESIMQRCodeScannerSheet: View {
             scannerUnavailableView(
                 systemImage: "camera.fill",
                 title: "未获得摄像头权限",
-                detail: "请在系统设置 → 隐私与安全性 → 摄像头中允许 DJOneHub。")
+                detail: "请在系统设置 → 隐私与安全性 → 摄像头中允许 Flame DJ Hub。")
         case .unavailable:
             scannerUnavailableView(
                 systemImage: "camera.slash.fill",

@@ -110,7 +110,7 @@ final class RoutingStore: ObservableObject {
     var clashConfigurationYAML: String {
         """
         proxies:
-          - name: DJOneHub-4G
+          - name: Flame-DJ-Hub-4G
             type: socks5
             server: 127.0.0.1
             port: \(config.clashListenPort)
@@ -287,7 +287,7 @@ final class RoutingStore: ObservableObject {
         }
         if let ownBundlePath = Bundle.main.bundleURL.resolvingSymlinksInPath().path.removingPercentEncoding,
            ownBundlePath.caseInsensitiveCompare(bundlePath) == .orderedSame {
-            errorMessage = "DJOneHub 自身不能加入分流规则。"
+            errorMessage = "Flame DJ Hub 自身不能加入分流规则。"
             return
         }
         let displayName = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)

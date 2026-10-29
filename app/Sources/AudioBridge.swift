@@ -156,6 +156,11 @@ final class AudioBridge: @unchecked Sendable {
 
     func start() {
         controlQueue.async {
+            guard AgentAudioOwnership.shared.acquire(.human) else {
+                self.state.message = "Agent 音频桥正在占用模块音频，请先停止 Agent PCM 会话"
+                self.publish()
+                return
+            }
             self.wantsAudio = true
             self.reconfigure()
         }
@@ -175,6 +180,7 @@ final class AudioBridge: @unchecked Sendable {
                 self.reconfigureWork?.cancel()
                 self.reconfigureWork = nil
                 self.stopPipeline()
+                AgentAudioOwnership.shared.release(.human)
                 self.attemptedRoute = nil
                 self.state.phase = .idle
                 self.state.message = nil

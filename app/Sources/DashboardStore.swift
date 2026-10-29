@@ -52,6 +52,8 @@ final class DashboardStore: ObservableObject {
     /// 防止轮询请求叠加：上次未完成时跳过本次
     private var refreshInFlight = false
     private var callModeRefreshInFlight = false
+    private var voiceVerificationPoll = PollGenerationGate()
+    private var agentAudioPoll = PollGenerationGate()
 
     @Published var usbnetEnabled = false
     @Published var usbnetLoaded = false
@@ -95,6 +97,10 @@ final class DashboardStore: ObservableObject {
     @Published var audioError: String?
     @Published var audioRunning = false
     @Published private(set) var callAudio = CallAudioState()
+    @Published var voiceVerification = VoiceVerificationAudioStatus.inactive
+    @Published var agentAudioStatus: AgentAudioStatus?
+    @Published var voiceVerificationActionInFlight = false
+    @Published var agentAudioStatusError: String?
     private var observedCallModeRestoreAt: Date?
     /// 本次来电时间（用于详情展示）
     @Published var incomingAt: Date?
@@ -180,6 +186,12 @@ final class DashboardStore: ObservableObject {
         incomingAt = nil
         IncomingCallCard.shared.hide()
         stopAudio()
+        voiceVerification = .inactive
+        agentAudioStatus = nil
+        voiceVerificationActionInFlight = false
+        agentAudioStatusError = nil
+        voiceVerificationPoll.invalidate()
+        agentAudioPoll.invalidate()
     }
 
     private func startPolling() {
@@ -191,11 +203,15 @@ final class DashboardStore: ObservableObject {
                 self.refresh()
                 self.pollCallStatus()
                 self.pollCallModeStatus()
+                self.pollVoiceVerification()
+                self.pollAgentAudioStatus()
             }
         }
         refresh()
         pollCallStatus()
         pollCallModeStatus()
+        pollVoiceVerification()
+        pollAgentAudioStatus()
     }
 
     private func stopPolling() {
@@ -521,7 +537,7 @@ final class DashboardStore: ObservableObject {
                     }
                 }
                 if status.isReady && callStatus.isActive && !audioRunning {
-                    startAudio()
+                    startHumanAudioUnlessAgentReserved()
                 }
                 if !status.isBusy {
                     callModeActionInFlight = false
@@ -721,6 +737,96 @@ final class DashboardStore: ObservableObject {
         }
     }
 
+    func pollVoiceVerification() {
+        guard case .running = backend.state else { return }
+        guard !voiceVerificationActionInFlight,
+              let generation = voiceVerificationPoll.begin() else { return }
+        Task {
+            do {
+                let status: VoiceVerificationAudioStatus = try await APIClient(timeoutInterval: 8)
+                    .get("api/call/voice-verification")
+                guard voiceVerificationPoll.accept(generation) else { return }
+                voiceVerification = status
+            } catch {
+                guard voiceVerificationPoll.accept(generation) else { return }
+                voiceVerification = DashboardFailClosedPolicy
+                    .voiceVerificationAfterReadFailure(error)
+            }
+        }
+    }
+
+    func armVoiceVerification(durationSeconds: Int, allowedNumber: String) {
+        let number = allowedNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !number.isEmpty, !voiceVerificationActionInFlight else { return }
+        voiceVerificationPoll.invalidate()
+        let generation = voiceVerificationPoll.generation
+        voiceVerificationActionInFlight = true
+        Task {
+            defer {
+                if voiceVerificationPoll.isCurrent(generation) {
+                    voiceVerificationActionInFlight = false
+                }
+            }
+            do {
+                let status: VoiceVerificationAudioStatus = try await APIClient(timeoutInterval: 12).send(
+                    "api/call/voice-verification/arm",
+                    body: VoiceVerificationArmRequest(
+                        durationSeconds: max(30, min(durationSeconds, 900)),
+                        allowedNumbers: [number]))
+                guard voiceVerificationPoll.isCurrent(generation) else { return }
+                voiceVerification = status
+            } catch {
+                guard voiceVerificationPoll.isCurrent(generation) else { return }
+                voiceVerification = DashboardFailClosedPolicy
+                    .voiceVerificationAfterReadFailure(error)
+                voiceError = "开启语音验证码窗口失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func disarmVoiceVerification() {
+        guard !voiceVerificationActionInFlight else { return }
+        voiceVerificationPoll.invalidate()
+        let generation = voiceVerificationPoll.generation
+        voiceVerificationActionInFlight = true
+        Task {
+            defer {
+                if voiceVerificationPoll.isCurrent(generation) {
+                    voiceVerificationActionInFlight = false
+                }
+            }
+            do {
+                let status: VoiceVerificationAudioStatus = try await APIClient(timeoutInterval: 12)
+                    .send("api/call/voice-verification/disarm")
+                guard voiceVerificationPoll.isCurrent(generation) else { return }
+                voiceVerification = status
+            } catch {
+                guard voiceVerificationPoll.isCurrent(generation) else { return }
+                voiceVerification = DashboardFailClosedPolicy
+                    .voiceVerificationAfterReadFailure(error)
+                voiceError = "关闭语音验证码窗口失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func pollAgentAudioStatus() {
+        guard case .running = backend.state else { return }
+        guard let generation = agentAudioPoll.begin() else { return }
+        Task {
+            do {
+                let status: AgentAudioStatus = try await APIClient(timeoutInterval: 8)
+                    .get("api/agent/audio/status")
+                guard agentAudioPoll.accept(generation) else { return }
+                agentAudioStatus = status
+                agentAudioStatusError = nil
+            } catch {
+                guard agentAudioPoll.accept(generation) else { return }
+                agentAudioStatus = DashboardFailClosedPolicy.agentAudioAfterReadFailure(error)
+                agentAudioStatusError = error.localizedDescription
+            }
+        }
+    }
+
     private func updateCallStatus(_ status: CallStatus) {
         let previous = callStatus
         callStatus = status
@@ -739,7 +845,7 @@ final class DashboardStore: ObservableObject {
         // 只有蜂窝通话真正进入 active 后才建立模块 D4/UAC 路由，避免拨号音、
         // 未接通呼叫或来电铃声提前占用模块音频设备。
         if status.isActive && !previous.isActive {
-            startAudio()
+            startHumanAudioUnlessAgentReserved()
         }
         // 通话结束（非空闲 → 空闲）时清空来电信息
         if status.isIdle && (previous.isActive || previous.state == "unknown" || previous.isIncoming) {
@@ -911,6 +1017,34 @@ final class DashboardStore: ObservableObject {
         dtmfError = nil
     }
 
+    private func startHumanAudioUnlessAgentReserved() {
+        let expectedSessionID = callStatus.sessionID
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let verification: VoiceVerificationAudioStatus = try await APIClient()
+                    .get("api/call/voice-verification")
+                guard self.callStatus.isActive,
+                      self.callStatus.sessionID == expectedSessionID else { return }
+                if VoiceVerificationAudioPolicy.reservesAgentAudio(
+                    callSessionID: self.callStatus.sessionID,
+                    callActive: self.callStatus.isActive,
+                    verification: verification
+                ) {
+                    // The backend owns this exact answered verification session.
+                    // Do not let the normal human bridge win the shared UAC owner.
+                    return
+                }
+            } catch {
+                // A normal call must remain usable if the optional verification
+                // status lookup is temporarily unavailable.
+            }
+            guard self.callStatus.isActive,
+                  self.callStatus.sessionID == expectedSessionID else { return }
+            self.startAudio()
+        }
+    }
+
     private func startAudio() {
         guard audioActivationTask == nil, !audioModuleRouteStarted else { return }
         guard callModeStatus?.isReady == true else {
@@ -934,7 +1068,7 @@ final class DashboardStore: ObservableObject {
                 let microphoneAllowed = await AudioBridge.shared.requestMicrophoneAccess()
                 try Task.checkCancellation()
                 guard microphoneAllowed else {
-                    self.audioError = "麦克风权限未开启。请在系统设置“隐私与安全性 → 麦克风”中允许 DJOneHub。"
+                    self.audioError = "麦克风权限未开启。请在系统设置“隐私与安全性 → 麦克风”中允许 Flame DJ Hub。"
                     return
                 }
                 try Task.checkCancellation()

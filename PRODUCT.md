@@ -12,7 +12,7 @@ DJI One 4G 模块的 macOS 用户。他们希望在 Mac 上集中查看模块状
 
 ## Product Purpose
 
-DJOneHub 是 DJI One 4G 模块的原生 macOS 管理应用。成功意味着用户可以从一个常驻应用中安全地完成模块日常管理，并在明确知情与确认后启用通话模式、准备模块侧语音运行时、拨打和接听电话。
+Flame DJ Hub 是 DJI One 4G 模块的原生 macOS 管理应用。成功意味着用户可以从一个常驻应用中安全地完成模块日常管理，并在明确知情与确认后启用通话模式、准备模块侧语音运行时、拨打和接听电话。
 
 ## Positioning
 
@@ -24,7 +24,7 @@ DJOneHub 是 DJI One 4G 模块的原生 macOS 管理应用。成功意味着用�
 - 模块通过 USB 连接；模块重启或 USB 组合切换会导致短暂重新枚举和网络中断。
 - 通话模式需要模块同时暴露可响应的 root ADB 与 UAC 接口、启用 IMS/VoLTE，并需要兼容模块固件内核的语音运行时。
 - 运行时来自 GitHub 固定提交；中国大陆网络环境需要原始下载与转发下载两种渠道。
-- 运行时保存于用户的 `~/Library/Application Support/DJOneHubNative`，并在每次使用前进行完整性校验。
+- 开发版运行数据保存于用户的 `~/Library/Application Support/FlameDJHub`；旧 `DJOneHubNative` 目录仅作为受控兼容迁移源。
 
 ## Capabilities and Constraints
 
@@ -41,7 +41,7 @@ DJOneHub 是 DJI One 4G 模块的原生 macOS 管理应用。成功意味着用�
 
 ## Brand Commitments
 
-- 产品名称保持 `DJOneHub`，界面以简洁、直接的中文为主。
+- 面向用户的产品名称统一为 `Flame DJ Hub`；上游归属、`djonehub` CLI、兼容环境变量和内部可执行文件保留原名。
 - 延续当前原生 macOS 信息架构、系统字体、系统颜色和系统控件，不引入独立网页式视觉语言。
 
 ## Evidence on Hand

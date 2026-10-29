@@ -197,7 +197,7 @@ struct TrafficRoutingView: View {
             }
 
             HStack {
-                Text("配置会保存，但每次启动 DJOneHub 后仍保持关闭，需手动启用。")
+                Text("配置会保存，但每次启动 Flame DJ Hub 后仍保持关闭，需手动启用。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -387,7 +387,7 @@ struct TrafficRoutingView: View {
                 Image(systemName: "lock.shield")
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                Text("独立分流会创建唯一的 TUN。检测到 Clash、Mihomo 等正在接管大范围路由时，DJOneHub 会拒绝启动；4G 或 SOCKS 不可用时，对应应用不会自动回落到系统直连。")
+                Text("独立分流会创建唯一的 TUN。检测到 Clash、Mihomo 等正在接管大范围路由时，Flame DJ Hub 会拒绝启动；4G 或 SOCKS 不可用时，对应应用不会自动回落到系统直连。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -401,7 +401,7 @@ struct TrafficRoutingView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("4G SOCKS5 出口")
                     .font(.headline)
-                Text("DJOneHub 不创建 TUN，也不配置应用规则；Clash 负责全部应用分流。")
+                Text("Flame DJ Hub 不创建 TUN，也不配置应用规则；Clash 负责全部应用分流。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -450,9 +450,9 @@ struct TrafficRoutingView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("在 Clash 中把目标应用指向 DJOneHub-4G")
+                    Text("在 Clash 中把目标应用指向 Flame-DJ-Hub-4G")
                         .font(.callout.bold())
-                    Text("流量路径：Clash TUN → 本地 SOCKS5 → DJOneHub → Baiwang 4G 网卡。此模式允许 Clash TUN 保持开启。")
+                    Text("流量路径：Clash TUN → 本地 SOCKS5 → Flame DJ Hub → Baiwang 4G 网卡。此模式允许 Clash TUN 保持开启。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

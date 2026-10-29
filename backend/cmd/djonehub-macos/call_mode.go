@@ -406,7 +406,7 @@ func (a *app) submitCallModeADBAuthorization() error {
 func (a *app) runtimeDirectory() string {
 	base := a.dataDir
 	if base == "" {
-		base = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "DJOneHubNative")
+		base = defaultAppSupportDirectory()
 	}
 	return filepath.Join(base, "voice-runtime", moduleVoiceVersion)
 }
@@ -884,7 +884,6 @@ func (a *app) runCallModeEnable(confirmADBAuthorization bool) {
 	}
 	adbProbeNotBefore := time.Now().Add(callModeADBReenumerationSettleDelay)
 	a.markUSBATDetached("call mode USB composition reboot")
-	a.resetModuleVoiceState()
 	status = newCallModeStatus("verifying_usb", "正在等待模块重连并验证接口")
 	status.ADBAuthorizationAccepted = authorizationPerformed
 	status.ADBEnabled = true
@@ -1045,6 +1044,10 @@ func (a *app) callModeRetryAPI(w http.ResponseWriter, _ *http.Request) {
 	}
 	go func() {
 		defer a.endCallModeOperation()
+		if err := a.stopModuleVoiceRouteSafely(2 * time.Second); err != nil {
+			a.failCallMode("模块语音路由尚未安全停止", err.Error())
+			return
+		}
 		a.resetModuleVoiceState()
 		a.prepareDownloadedRuntime("", "")
 	}()
@@ -1328,8 +1331,8 @@ func (a *app) callAudioStartAPI(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *app) callAudioStopAPI(w http.ResponseWriter, _ *http.Request) {
-	if err := a.stopModuleVoiceRoute(a.runtimeDirectory()); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+	if err := a.stopModuleVoiceRouteSafely(2 * time.Second); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"stopped": true})

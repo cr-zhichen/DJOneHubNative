@@ -3,7 +3,7 @@
 ## 架构总览
 
 ```
-DJOneHub.app
+Flame DJ Hub.app
 ├── Contents/MacOS/DJOneHub      # SwiftUI 前端（进程宿主）
 └── Contents/Resources/backend/
     ├── djonehubd                      # Go 后端（从 DJOneHub 移植）
@@ -11,7 +11,7 @@ DJOneHub.app
 ```
 
 - **前端**：SwiftUI（`app/Sources/`）
-- **通信**：Unix domain socket（`~/Library/Application Support/DJOneHubNative/djonehub.sock`），Swift 侧自定义 `URLProtocol` 以 `http+unix://` 协议走 URLSession
+- **通信**：Unix domain socket（开发版为 `~/Library/Application Support/FlameDJHub/flame-dj-hub.sock`），Swift 侧自定义 `URLProtocol` 以 `http+unix://` 协议走 URLSession
 - **后端**：Go（`backend/`），监听支持 `unix:/path`（`listenWith`），硬件逻辑（libusb/QMI/eUICC/短信）来自原 DJOneHub
 - **构建**：`xcodebuild`（Xcode 26+），Go 后端由工程的 post-build 脚本随 Xcode 构建一并编译嵌入；CI 见 `.github/workflows/release.yml`
 
@@ -64,8 +64,8 @@ DJOneHub.app
 
 ### 6. 应用分流（默认关闭）
 
-- 页面：`TrafficRoutingView`；配置：`~/Library/Application Support/DJOneHubNative/network-routing.json`
-- 运行状态不持久化：每次启动 DJOneHub 后均为关闭，只有用户在页面显式启用才启动网络核心
+- 页面：`TrafficRoutingView`；开发版配置位于 `~/Library/Application Support/FlameDJHub/network-routing.json`
+- 运行状态不持久化：每次启动 Flame DJ Hub 后均为关闭，只有用户在页面显式启用才启动网络核心
 - 独立分流：sing-box 以单独的管理员监督进程运行一个 TUN；`.app` 包内主进程与辅助进程按 `process_path_regex` 匹配
   - `module_direct`：出站强制绑定 Baiwang 对应网卡
   - `system_direct`：交给启动时自动识别的系统默认出口

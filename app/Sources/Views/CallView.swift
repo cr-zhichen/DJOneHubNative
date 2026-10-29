@@ -24,6 +24,8 @@ struct CallView: View {
     @State private var backupToDelete: CallModeUSBBackupSummary?
     @State private var showDeleteConfirmation = false
     @State private var layoutMode = CallLayoutMode.compact
+    @State private var verificationNumber = ""
+    @State private var verificationDuration = 300
 
     private let dialKeys: [DialKey] = [
         .init(symbol: "1", letters: ""),
@@ -182,6 +184,7 @@ struct CallView: View {
             HStack(alignment: .top, spacing: 14) {
                 VStack(alignment: .leading, spacing: 14) {
                     callWorkspace
+                    voiceVerificationPanel
                     ringtoneOptionCard
                 }
                 .frame(minWidth: 540, maxWidth: .infinity, alignment: .topLeading)
@@ -198,6 +201,7 @@ struct CallView: View {
                     compactOperationalInspector
                 }
                 callWorkspace
+                voiceVerificationPanel
                 ringtoneOptionCard
                 if !preparationLeads {
                     compactOperationalInspector
@@ -620,7 +624,7 @@ struct CallView: View {
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("仅影响 DJOneHub，输入和输出可以使用不同设备。")
+                Text("仅影响 Flame DJ Hub，输入和输出可以使用不同设备。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -646,7 +650,7 @@ struct CallView: View {
         }
         .pickerStyle(.menu)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .help("仅改变 DJOneHub 的\(title)，不会更改系统默认设备。")
+        .help("仅改变 Flame DJ Hub 的\(title)，不会更改系统默认设备。")
     }
 
     private var audioNeedsAttention: Bool {
@@ -684,6 +688,137 @@ struct CallView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+    }
+
+    private var voiceVerificationPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("语音验证码接听", systemImage: "waveform.and.phone")
+                    .font(.callout.bold())
+                Spacer()
+                Text(voiceVerificationStateText)
+                    .font(.caption)
+                    .foregroundStyle(voiceVerificationStateColor)
+            }
+
+            if store.voiceVerification.active {
+                HStack(spacing: 12) {
+                    if let expiresAt = store.voiceVerification.expiresAt {
+                        Label { Text(expiresAt, style: .timer).monospacedDigit() } icon: {
+                            Image(systemName: "timer")
+                        }
+                    }
+                    if !store.voiceVerification.allowedNumbers.isEmpty {
+                        Text(store.voiceVerification.allowedNumbers.joined(separator: ", "))
+                            .font(.caption.monospacedDigit())
+                            .textSelection(.enabled)
+                    }
+                    Spacer()
+                    Button("关闭窗口") { store.disarmVoiceVerification() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(store.voiceVerificationActionInFlight)
+                }
+                if store.voiceVerification.answered {
+                    Label(
+                        store.voiceVerification.audioAuthorized ? "已接听，Agent PCM 已授权" : "已接听，音频未授权",
+                        systemImage: store.voiceVerification.audioAuthorized ? "checkmark.circle.fill" : "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(store.voiceVerification.audioAuthorized ? .green : .orange)
+                } else {
+                    Text("窗口开启后仅自动接听指定号码的一通来电。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    TextField("允许来电号码", text: $verificationNumber)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 150)
+                    Picker("时长", selection: $verificationDuration) {
+                        Text("1 分钟").tag(60)
+                        Text("5 分钟").tag(300)
+                        Text("10 分钟").tag(600)
+                        Text("15 分钟").tag(900)
+                    }
+                    .frame(width: 110)
+                    Button("开启一次性窗口") {
+                        store.armVoiceVerification(
+                            durationSeconds: verificationDuration,
+                            allowedNumber: verificationNumber)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(verificationNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.voiceVerificationActionInFlight)
+                }
+                Text("必须指定号码；窗口限时、单次消费，不会自动接听其他来电。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let error = store.voiceVerification.lastError, !error.isEmpty {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            agentAudioStatusPanel
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+    }
+
+    private var agentAudioStatusPanel: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("Agent PCM / ASR")
+                    .font(.caption.weight(.medium))
+                Spacer()
+                if let status = store.agentAudioStatus {
+                    Text(status.voiceAgentAvailable ? "可用" : "未就绪")
+                        .foregroundStyle(status.voiceAgentAvailable ? .green : .secondary)
+                }
+            }
+            if let status = store.agentAudioStatus {
+                Text("Transport \(status.transportReady ? "就绪" : "未就绪") · Client \(status.clientConnected ? "已连接" : "未连接") · Module IO \(status.moduleIOReady ? "就绪" : "未就绪")")
+                Text("PCM \(status.framesReceived) 帧 · 非零 \(status.nonzeroFrames) · ASR \(asrStatusText(status))")
+                if let code = status.verificationCode, !code.isEmpty {
+                    Label("验证码：\(code)", systemImage: "number.circle.fill")
+                        .foregroundStyle(.green)
+                        .textSelection(.enabled)
+                } else if let transcript = status.transcript, !transcript.isEmpty {
+                    Text("转录：\(transcript)")
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+                if let error = status.captureError ?? status.asrError ?? status.error, !error.isEmpty {
+                    Text(error).foregroundStyle(.orange)
+                }
+            } else if let error = store.agentAudioStatusError {
+                Text("无法读取 Agent 音频状态：\(error)").foregroundStyle(.secondary)
+            } else {
+                Text("正在读取 Agent 音频状态…").foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.top, 4)
+    }
+
+    private var voiceVerificationStateText: String {
+        if store.voiceVerification.active { return "窗口已开启" }
+        if store.voiceVerification.consumed { return "已消费" }
+        return "未开启"
+    }
+
+    private var voiceVerificationStateColor: Color {
+        store.voiceVerification.active ? .orange : .secondary
+    }
+
+    private func asrStatusText(_ status: AgentAudioStatus) -> String {
+        if status.effectiveASRAvailable { return "运行中" }
+        if let error = status.asrError, !error.isEmpty { return "失败" }
+        if status.asrCompiled { return "已编译，未启动" }
+        return "不可用"
     }
 
     private var operationalInspector: some View {
@@ -1541,7 +1676,7 @@ struct CallView: View {
     private var deleteConfirmationMessage: String {
         guard let backup = backupToDelete else { return "" }
         let time = backup.savedAt.formatted(date: .numeric, time: .shortened)
-        return "将从本机永久删除 \(time) 的配置备份。此操作不会修改当前模块，但删除后无法在 DJOneHub 中导出或还原这份备份。"
+        return "将从本机永久删除 \(time) 的配置备份。此操作不会修改当前模块，但删除后无法在 Flame DJ Hub 中导出或还原这份备份。"
     }
 
     private var usbConfirmationTitle: String {
@@ -1575,7 +1710,7 @@ struct CallView: View {
     private func chooseImportFile() {
         let panel = NSOpenPanel()
         panel.title = "导入模块配置备份"
-        panel.message = "选择由 DJOneHub 导出的 JSON 备份。导入只保存到本机，不会立即修改模块。"
+        panel.message = "选择由 Flame DJ Hub 导出的 JSON 备份。导入只保存到本机，不会立即修改模块。"
         panel.prompt = "导入"
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false

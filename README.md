@@ -1,11 +1,11 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/AppIcon-dark.png">
-    <img alt="DJOneHub" src="docs/AppIcon-light.png" width="128">
+    <img alt="Flame DJ Hub" src="docs/AppIcon-light.png" width="128">
   </picture>
 </p>
 
-<h1 align="center">DJOneHub</h1>
+<h1 align="center">Flame DJ Hub</h1>
 
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-PolyForm%20Noncommercial-orange"></a>
@@ -17,9 +17,9 @@
 
 ## 简介
 
-DJOneHub 是大疆第一代 4G 模块管理工具的原生 macOS 重制版。SwiftUI 前端与 Go 后端通过 Unix domain socket 通信，在一个应用中完成模块状态查看、短信与 eSIM 管理、网络分流、蜂窝通话、来电提醒和调试诊断。
+Flame DJ Hub 是面向大疆第一代 4G 模块的原生 macOS 管理工具。SwiftUI 前端与 Go 后端通过 Unix domain socket 通信，在一个应用中完成模块状态查看、短信与 eSIM 管理、网络分流、蜂窝通话、来电提醒和调试诊断。
 
-项目由 [ZenGeekLabs/DJOneHub](https://github.com/ZenGeekLabs/DJOneHub)（源自 [iniwex5/vohive](https://github.com/iniwex5/vohive)）改造而来，保留上游 Go 核心逻辑，并以原生 SwiftUI 界面替代 Web 套壳。
+项目由 [ZenGeekLabs/DJOneHub](https://github.com/ZenGeekLabs/DJOneHub)（源自 [iniwex5/vohive](https://github.com/iniwex5/vohive)）改造而来。`DJOneHub`、`vohive`、`djonehub` 等名称在上游归属、CLI、兼容环境变量和内部可执行文件中继续保留；面向用户的产品名称统一为 Flame DJ Hub。
 
 ## 功能
 
@@ -62,7 +62,7 @@ DJOneHub 是大疆第一代 4G 模块管理工具的原生 macOS 重制版。Swi
 
 接通后可使用通话按键盘发送 `0–9`、`*`、`#`，用于分机和语音菜单。也可输入 `主号码,分机`（例如 `01012345678,,123#`）：应用只拨主号，在确认接通后按每个逗号暂停 2 秒，再依次发送后续按键。完整拨号串保存在通话记录中供回拨使用；通话中手动输入的按键不会保存到记录或日志。挂断、断连、通话变化或发送结果不确定时会停止后续按键，不会自动重发。
 
-通话页的「麦克风」和「扬声器／耳机」可独立选择，默认跟随系统。手动选择仅作用于 DJOneHub，并按设备 UID 记住；通话中更改设备会短暂重建音频连接，不会挂断电话。指定设备断开时暂停通话音频并提示，重连后恢复，不自动切换到扬声器。Mac 侧双向音频通过同一语音处理链启用回声消除和自动增益；若设备组合无法启用或实际设备与选择不符，会停止音频并显示重试提示。音频架构及实机验证清单见 [通话音频](docs/CALL_AUDIO.md)。
+通话页的「麦克风」和「扬声器／耳机」可独立选择，默认跟随系统。手动选择仅作用于 Flame DJ Hub，并按设备 UID 记住；通话中更改设备会短暂重建音频连接，不会挂断电话。指定设备断开时暂停通话音频并提示，重连后恢复，不自动切换到扬声器。Mac 侧双向音频通过同一语音处理链启用回声消除和自动增益；若设备组合无法启用或实际设备与选择不符，会停止音频并显示重试提示。音频架构及实机验证清单见 [通话音频](docs/CALL_AUDIO.md)。
 
 配置备份可在通话页导入、导出和删除，也可在设备身份匹配且没有通话进行时安全还原。导入只保存通过格式与一致性校验的 JSON，不会立即修改模块；还原前会再次备份当前配置，过程中可能重启模块并暂时中断网络、短信和 eSIM 操作。
 
@@ -72,9 +72,9 @@ DJOneHub 是大疆第一代 4G 模块管理工具的原生 macOS 重制版。Swi
 
 从 [GitHub Releases](https://github.com/cr-zhichen/DJOneHubNative/releases) 下载适合当前架构的 DMG，将 App 拖入“应用程序”文件夹即可。发行版采用 ad-hoc 签名且未公证；若首次启动提示“无法验证开发者”，请先尝试打开一次，再前往“系统设置 → 隐私与安全性”点击“仍要打开”。
 
-应用启动时会自动启动后端服务；关闭主窗口后仍在菜单栏运行，通过“退出 DJOneHub”才会停止服务。应用分流默认关闭，独立分流首次启用或更新权限服务时需要管理员授权。
+应用启动时会自动启动后端服务；关闭主窗口后仍在菜单栏运行，通过“退出 Flame DJ Hub”才会停止服务。应用分流默认关闭，独立分流首次启用或更新权限服务时需要管理员授权。
 
-日志位于 `~/Library/Application Support/DJOneHubNative/djonehub.log`。
+开发版运行数据位于 `~/Library/Application Support/FlameDJHub/`。旧目录 `DJOneHubNative` 仅作为兼容迁移源；Socket、PID、日志和临时文件不会从旧目录复制。
 
 ## 构建
 
@@ -93,7 +93,7 @@ mise run clean              # 清理 build/ 与 dist/
 
 项目目前主要在 macOS 26.5.2、Apple M5 Pro、Xcode 26.6 和 Go 1.26.3 环境下开发与测试。最低部署目标为 macOS 13，但 macOS 13–25 尚未完成同等范围的真实设备验证。
 
-API 模型与端点已通过无硬件环境自动验证（`app/Tests/APIProbe`）；短信、eSIM 写入、蜂窝链路和独立分流等完整功能仍需对应硬件与网络环境验证。2026-08-14 已在 QDC507 模块上完成通话模式初始化、运行时下载校验、语音路由、Mac 音频输入输出和重启后恢复验证；由于缺少另一部测试电话，运营商侧呼叫建立及双方实际可听仍待验证。
+API 模型、结构化诊断、权限策略和主要 Go 包已通过自动化验证。当前真机已完成模块、SIM、运营商、LTE 注册、信号、短信归档和 eSIM 类型的只读回读；`usbnet=0`，Mac 默认出口保持为现有系统网络。真实短信收发、运营商通话、非零 PCM、ASR 转写、双方实际可听和 TTS 尚未在本轮交付中完成验收，不能由构建成功或 capability 字段代替。
 
 ## 文档
 
@@ -106,7 +106,7 @@ API 模型与端点已通过无硬件环境自动验证（`app/Tests/APIProbe`�
 
 ## 社区
 
-本项目的开发契机源于 [LINUX DO](https://linux.do/) 社区。在社区中了解到大疆第一代 4G 模块后，开始进行相关研究并开发 DJOneHub 的原生 macOS 版本。
+本项目的开发契机源于 [LINUX DO](https://linux.do/) 社区。在社区中了解到大疆第一代 4G 模块后，开始进行相关研究并开发 Flame DJ Hub。
 
 作者社区主页：[zgccrui](https://linux.do/u/zgccrui)
 

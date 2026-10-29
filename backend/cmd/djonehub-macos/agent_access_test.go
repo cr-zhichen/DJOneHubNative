@@ -213,6 +213,63 @@ func TestCLISMSListHidesContentUntilExactIDRead(t *testing.T) {
 	}
 }
 
+func TestAgentCapabilitiesExposeVoiceVerification(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/agent/capabilities", nil)
+	principal := requestPrincipal{Kind: "cli", Scopes: map[string]struct{}{
+		"call.read":   {},
+		"call.answer": {},
+	}}
+	request = request.WithContext(contextWithPrincipal(request, principal))
+	response := httptest.NewRecorder()
+	(&app{}).agentCapabilities(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Capabilities []agentCapability `json:"capabilities"`
+		Safety       struct {
+			IdempotencyRequired []string `json:"idempotency_required"`
+		} `json:"safety"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	want := map[string]struct {
+		scope    string
+		mutating bool
+	}{
+		"call.voice-verification.status": {scope: "call.read"},
+		"call.voice-verification.arm":    {scope: "call.answer", mutating: true},
+		"call.voice-verification.disarm": {scope: "call.answer", mutating: true},
+	}
+	got := make(map[string]agentCapability)
+	for _, capability := range body.Capabilities {
+		got[capability.Name] = capability
+	}
+	for name, expected := range want {
+		capability, ok := got[name]
+		if !ok {
+			t.Fatalf("missing capability %q", name)
+		}
+		if capability.RequiredScope != expected.scope || !capability.Granted || capability.Mutating != expected.mutating {
+			t.Fatalf("capability=%+v want scope=%q granted=true mutating=%v", capability, expected.scope, expected.mutating)
+		}
+	}
+	seenArm := false
+	seenDisarm := false
+	for _, name := range body.Safety.IdempotencyRequired {
+		switch name {
+		case "call.voice-verification.arm":
+			seenArm = true
+		case "call.voice-verification.disarm":
+			seenDisarm = true
+		}
+	}
+	if !seenArm || !seenDisarm {
+		t.Fatalf("voice-verification mutations missing from idempotency_required: arm=%v disarm=%v", seenArm, seenDisarm)
+	}
+}
+
 func writeTestCLIConfig(t *testing.T, path string, mode os.FileMode, config cliAccessConfig) {
 	t.Helper()
 	data, err := json.Marshal(config)

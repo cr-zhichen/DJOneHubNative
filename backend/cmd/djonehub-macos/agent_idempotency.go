@@ -36,11 +36,15 @@ func newIdempotencyStore() *idempotencyStore {
 var agentIdempotency = newIdempotencyStore()
 
 var idempotentCLIPaths = map[string]bool{
-	"POST /api/sms/send":    true,
-	"POST /api/call/dial":   true,
-	"POST /api/call/answer": true,
-	"POST /api/call/hangup": true,
-	"POST /api/esim/switch": true,
+	"POST /api/sms/send":                       true,
+	"POST /api/call/dial":                      true,
+	"POST /api/call/answer":                    true,
+	"POST /api/call/hangup":                    true,
+	"POST /api/call/voice-verification/arm":    true,
+	"POST /api/call/voice-verification/disarm": true,
+	"POST /api/esim/switch":                    true,
+	"POST /api/agent/audio/start":              true,
+	"POST /api/agent/audio/stop":               true,
 }
 
 func (a *app) agentIdempotencyMiddleware(next http.Handler) http.Handler {

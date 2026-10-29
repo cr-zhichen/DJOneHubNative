@@ -277,7 +277,12 @@ struct HomeView: View {
             }
             if let traffic {
                 if !traffic.available {
-                    networkRecoveryRow(traffic)
+                    if networkTrafficPresentation(traffic, usbnetEnabled: store.usbnetEnabled)
+                        == .cellularDataDisabled {
+                        cellularDataDisabledRow
+                    } else {
+                        networkRecoveryRow(traffic)
+                    }
                 }
                 HStack(spacing: 16) {
                     trafficItem("本次下载", trafficMetric(traffic.sessionRX))
@@ -300,6 +305,26 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+    }
+
+    private var cellularDataDisabledRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lock.shield.fill")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("SIM 数据已禁用")
+                    .font(.callout)
+                Text("USB 网卡保持关闭，网络流量继续使用 Mac 当前系统出口。")
+                    .font(.caption)
+                    .foregroundStyle(Color.primary.opacity(0.7))
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(colorScheme == .dark ? 0.10 : 0.06)))
     }
 
     private func networkRecoveryRow(_ traffic: TrafficSnapshot) -> some View {
@@ -449,7 +474,7 @@ struct HomeView: View {
         .alert("通知权限被拒绝", isPresented: $showNotifyDeniedAlert) {
             Button("好", role: .cancel) {}
         } message: {
-            Text("请在 系统设置 → 通知 中允许 DJOneHub 的通知后再开启。")
+            Text("请在 系统设置 → 通知 中允许 Flame DJ Hub 的通知后再开启。")
         }
     }
 

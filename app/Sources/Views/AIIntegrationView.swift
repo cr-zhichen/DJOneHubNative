@@ -15,6 +15,8 @@ struct AIIntegrationView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            PermissionCenterSection()
+
             Section("命令行工具") {
                 LabeledContent("安装状态") {
                     Label(installationTitle, systemImage: installationIcon)
@@ -165,7 +167,7 @@ struct AIIntegrationView: View {
         .formStyle(.grouped)
         .frame(maxWidth: 640)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle("AI 与 CLI")
+        .navigationTitle("权限与 CLI")
         .onAppear {
             manager.refreshInstallationState()
         }
@@ -304,11 +306,11 @@ struct AIIntegrationView: View {
         case .checking:
             return "正在检查 CLI 状态。"
         case .bundledUnavailable:
-            return "当前 App 中未找到 CLI，请重新安装 DJOneHub。"
+            return "当前 App 中未找到 CLI，请重新安装 Flame DJ Hub。"
         case .notInstalled:
             return "安装后，可在终端和支持命令行工具的 Agent 中使用 djonehub。"
         case .installed:
-            return "CLI 已可用。DJOneHub 更新后，如需同步新版本，会在这里提醒你。"
+            return "CLI 已可用。Flame DJ Hub 更新后，如需同步新版本，会在这里提醒你。"
         case .updateAvailable:
             return "已安装版本与当前 App 不一致，请同步后继续使用。"
         case .conflict(let reason):

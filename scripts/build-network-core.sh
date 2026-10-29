@@ -23,29 +23,33 @@ BUILD_DIR="${CACHE_DIR}/build"
 
 mkdir -p "${OUTPUT_DIR}" "${CACHE_DIR}" "${BUILD_DIR}"
 
-if [ ! -d "${SOURCE_DIR}/.git" ]; then
-  git clone --quiet --depth 1 --branch "v${SING_BOX_VERSION}" \
-    https://github.com/SagerNet/sing-box.git "${SOURCE_DIR}"
-fi
-
-ACTUAL_COMMIT=$(git -C "${SOURCE_DIR}" rev-parse HEAD)
-if [ "${ACTUAL_COMMIT}" != "${SING_BOX_COMMIT}" ]; then
-  echo "错误：sing-box 源码提交不匹配，期望 ${SING_BOX_COMMIT}，实际 ${ACTUAL_COMMIT}" >&2
-  echo "请清理 Xcode DerivedData 后重试。" >&2
-  exit 1
-fi
-
-[ -f "${PATCH_FILE}" ] || { echo "错误：缺少 sing-box DJOneHub 补丁" >&2; exit 1; }
-if git -C "${SOURCE_DIR}" apply --unidiff-zero --reverse --check "${PATCH_FILE}" >/dev/null 2>&1; then
+if [ "${SING_BOX_OFFLINE_OVERRIDE:-0}" = "1" ]; then
   :
 else
-  git -C "${SOURCE_DIR}" apply --unidiff-zero --check "${PATCH_FILE}" || {
-    echo "错误：无法应用 sing-box DJOneHub 补丁，请清理 Xcode DerivedData 后重试。" >&2
+  if [ ! -d "${SOURCE_DIR}/.git" ]; then
+    git clone --quiet --depth 1 --branch "v${SING_BOX_VERSION}" \
+      https://github.com/SagerNet/sing-box.git "${SOURCE_DIR}"
+  fi
+
+  ACTUAL_COMMIT=$(git -C "${SOURCE_DIR}" rev-parse HEAD)
+  if [ "${ACTUAL_COMMIT}" != "${SING_BOX_COMMIT}" ]; then
+    echo "错误：sing-box 源码提交不匹配，期望 ${SING_BOX_COMMIT}，实际 ${ACTUAL_COMMIT}" >&2
+    echo "请清理 Xcode DerivedData 后重试。" >&2
     exit 1
-  }
-  git -C "${SOURCE_DIR}" apply --unidiff-zero "${PATCH_FILE}"
+  fi
+
+  [ -f "${PATCH_FILE}" ] || { echo "错误：缺少 sing-box DJOneHub 补丁" >&2; exit 1; }
+  if git -C "${SOURCE_DIR}" apply --unidiff-zero --reverse --check "${PATCH_FILE}" >/dev/null 2>&1; then
+    :
+  else
+    git -C "${SOURCE_DIR}" apply --unidiff-zero --check "${PATCH_FILE}" || {
+      echo "错误：无法应用 sing-box DJOneHub 补丁，请清理 Xcode DerivedData 后重试。" >&2
+      exit 1
+    }
+    git -C "${SOURCE_DIR}" apply --unidiff-zero "${PATCH_FILE}"
+  fi
+  PATCH_SHA=$(shasum -a 256 "${PATCH_FILE}" | awk '{print $1}')
 fi
-PATCH_SHA=$(shasum -a 256 "${PATCH_FILE}" | awk '{print $1}')
 
 build_core() {
   APPLE_ARCH="$1"
@@ -110,4 +114,4 @@ else
 fi
 
 chmod 755 "${OUTPUT_DIR}/sing-box"
-cp "${SOURCE_DIR}/LICENSE" "${OUTPUT_DIR}/sing-box-GPL-3.0-or-later.txt"
+cp "${SING_BOX_LICENSE_FILE:-${SOURCE_DIR}/LICENSE}" "${OUTPUT_DIR}/sing-box-GPL-3.0-or-later.txt"

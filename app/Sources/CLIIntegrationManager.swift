@@ -46,6 +46,10 @@ struct CLIPermission: Identifiable, Hashable {
             detail: "保留为安全退出动作，不额外要求 --yes。",
             systemImage: "phone.down.fill", mutating: true, prerequisite: "call.read"),
         .init(
+            id: "call.agent_audio", title: "Agent PCM 音频",
+            detail: "授权单客户端 8 kHz PCM 数据通道；不包含 ASR/TTS，启动和停止仍需 --yes。",
+            systemImage: "waveform", mutating: true, prerequisite: "call.read"),
+        .init(
             id: "esim.read", title: "读取 eSIM",
             detail: "读取卡片、Profile 与异步操作状态。",
             systemImage: "simcard", mutating: false, prerequisite: nil),
@@ -56,7 +60,7 @@ struct CLIPermission: Identifiable, Hashable {
     ]
 
     static let readOnlyScopes = Set(all.filter { !$0.mutating }.map(\.id))
-    static let communicationScopes = Set(all.map(\.id))
+    static let communicationScopes = Set(all.filter { $0.id != "call.agent_audio" }.map(\.id))
 }
 
 enum CLIPermissionPreset: String {
@@ -124,7 +128,7 @@ final class CLIIntegrationManager: ObservableObject {
 
     var copyablePrompt: String {
         """
-        DJOneHub 已安装在这台 Mac 上。请运行：
+        Flame DJ Hub 已安装在这台 Mac 上。请运行：
         djonehub agent skill export --format json
 
         读取返回结果中的 entrypoint_content、source_directory 和 files，并按照当前 Agent 支持的方式安装 Skill。如果当前 Agent 不支持安装 Skill，请直接读取并遵循 entrypoint_content。
@@ -269,8 +273,7 @@ final class CLIIntegrationManager: ObservableObject {
     }
 
     private var supportDirectory: URL {
-        fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("DJOneHubNative", isDirectory: true)
+        FlameRuntimePaths.prepareSupportDirectory(fileManager: fileManager)
     }
 
     private var runtimeMetadataURL: URL {
@@ -354,7 +357,7 @@ final class CLIIntegrationManager: ObservableObject {
     private func prepareSupportDirectory() throws {
         try fileManager.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
         guard Darwin.chmod(supportDirectory.path, 0o700) == 0 else {
-            throw CLIIntegrationError("无法保护 DJOneHub 的本机配置目录。")
+            throw CLIIntegrationError("无法保护 Flame DJ Hub 的本机配置目录。")
         }
     }
 
@@ -378,19 +381,19 @@ final class CLIIntegrationManager: ObservableObject {
         }
         guard fileType == S_IFREG else {
             return .init(
-                state: .conflict("/usr/local/bin/djonehub 不是由 DJOneHub 管理的普通文件。"),
+                state: .conflict("/usr/local/bin/djonehub 不是由 Flame DJ Hub 管理的普通文件。"),
                 installedVersion: nil)
         }
         do {
             var markerStatus = stat()
             guard Darwin.lstat(Self.markerURL.path, &markerStatus) == 0 else {
                 return .init(
-                    state: .conflict("已存在同名 CLI，但缺少 DJOneHub 管理标记；不会覆盖。"),
+                    state: .conflict("已存在同名 CLI，但缺少 Flame DJ Hub 管理标记；不会覆盖。"),
                     installedVersion: nil)
             }
             guard (markerStatus.st_mode & S_IFMT) == S_IFREG else {
                 return .init(
-                    state: .conflict("DJOneHub CLI 管理标记不是普通文件；不会覆盖。"),
+                    state: .conflict("Flame DJ Hub CLI 管理标记不是普通文件；不会覆盖。"),
                     installedVersion: nil)
             }
             let markerData = try Data(contentsOf: Self.markerURL)
@@ -398,7 +401,7 @@ final class CLIIntegrationManager: ObservableObject {
             guard marker.product == "DJOneHub",
                   Self.isDJOneHubBundleIdentifier(marker.bundleIdentifier) else {
                 return .init(
-                    state: .conflict("现有 CLI 的管理标记不属于 DJOneHub。"),
+                    state: .conflict("现有 CLI 的管理标记不属于 Flame DJ Hub。"),
                     installedVersion: nil)
             }
             let installedHash = try Self.sha256(of: Self.destinationURL)
@@ -421,7 +424,9 @@ final class CLIIntegrationManager: ObservableObject {
 
     private static func isDJOneHubBundleIdentifier(_ identifier: String) -> Bool {
         let stableIdentifier = "com.djonehub.native"
-        return identifier == stableIdentifier || identifier.hasPrefix(stableIdentifier + ".")
+        let flameIdentifier = "cn.flameapi.flamedjhub"
+        return identifier == stableIdentifier || identifier.hasPrefix(stableIdentifier + ".") ||
+            identifier == flameIdentifier || identifier.hasPrefix(flameIdentifier + ".")
     }
 
     private static func displayVersion(_ version: String) -> String {

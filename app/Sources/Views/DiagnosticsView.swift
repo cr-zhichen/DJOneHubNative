@@ -1,10 +1,11 @@
 import SwiftUI
 import UserNotifications
 
-/// 调试与诊断：按功能分页组织（网络诊断 / AT 调试 / 通知调试 / 界面模式），
+/// 调试与诊断：按功能分页组织（运行状态 / 网络诊断 / AT 调试 / 通知调试 / 界面模式），
 /// 后续新增调试功能时新增一个 tab 及对应子视图即可，互不影响。
 struct DiagnosticsView: View {
     enum DebugTab: String, CaseIterable, Identifiable {
+        case runtime = "运行状态"
         case network = "网络诊断"
         case at = "AT 调试"
         case notify = "通知调试"
@@ -13,10 +14,13 @@ struct DiagnosticsView: View {
         var id: String { rawValue }
     }
 
-    @State private var tab: DebugTab = .network
+    @State private var tab: DebugTab = .runtime
 
     var body: some View {
         TabView(selection: $tab) {
+            RuntimeDiagnosticsView()
+                .tabItem { Label(DebugTab.runtime.rawValue, systemImage: "stethoscope") }
+                .tag(DebugTab.runtime)
             DiagnosticNetworkView()
                 .tabItem { Label(DebugTab.network.rawValue, systemImage: "network") }
                 .tag(DebugTab.network)

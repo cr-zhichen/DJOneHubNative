@@ -13,9 +13,33 @@ func runInternalADBProbe() error {
 }
 
 func (a *app) resetModuleVoiceState() {
+	a.resetModuleVoiceStateLocked(false)
+}
+
+func (a *app) resetModuleVoiceStateAfterHardwareLoss() {
+	a.moduleVoiceTeardownMu.Lock()
+	defer a.moduleVoiceTeardownMu.Unlock()
+	a.resetModuleVoiceStateLocked(true)
+}
+
+func (a *app) resetModuleVoiceStateLocked(hardwareLost bool) {
 	a.moduleVoiceMu.Lock()
+	a.moduleVoiceTransitionGeneration++
+	a.moduleVoiceResetGeneration++
 	a.moduleVoicePrepared = false
 	a.moduleVoiceRoute = false
+	if !a.moduleVoiceRouteStarting {
+		a.moduleVoiceRouteStarting = false
+		a.moduleVoiceRouteStartGeneration = 0
+		a.moduleVoiceRouteAttemptedSession = ""
+	}
+	a.moduleVoiceRouteLastError = ""
+	a.moduleVoiceRouteOwnerSession = ""
+	a.moduleVoiceRouteOwnerGeneration = 0
+	a.moduleVoiceRoutePendingOwner = 0
+	if hardwareLost {
+		a.moduleVoiceTeardownInProgress = false
+	}
 	a.moduleVoiceMu.Unlock()
 }
 

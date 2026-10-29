@@ -16,7 +16,7 @@ struct AboutView: View {
                         .frame(width: 56, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "DJOneHub")
+                        Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Flame DJ Hub")
                             .font(.headline)
                         Text("版本 \(updateChecker.currentVersion)（构建 \(updateChecker.buildNumber)）")
                             .font(.callout).foregroundStyle(.secondary)

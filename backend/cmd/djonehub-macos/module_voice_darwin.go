@@ -67,9 +67,33 @@ func probeModuleADBDirect() error {
 }
 
 func (a *app) resetModuleVoiceState() {
+	a.resetModuleVoiceStateLocked(false)
+}
+
+func (a *app) resetModuleVoiceStateAfterHardwareLoss() {
+	a.moduleVoiceTeardownMu.Lock()
+	defer a.moduleVoiceTeardownMu.Unlock()
+	a.resetModuleVoiceStateLocked(true)
+}
+
+func (a *app) resetModuleVoiceStateLocked(hardwareLost bool) {
 	a.moduleVoiceMu.Lock()
+	a.moduleVoiceTransitionGeneration++
+	a.moduleVoiceResetGeneration++
 	a.moduleVoicePrepared = false
 	a.moduleVoiceRoute = false
+	if !a.moduleVoiceRouteStarting {
+		a.moduleVoiceRouteStarting = false
+		a.moduleVoiceRouteStartGeneration = 0
+		a.moduleVoiceRouteAttemptedSession = ""
+	}
+	a.moduleVoiceRouteLastError = ""
+	a.moduleVoiceRouteOwnerSession = ""
+	a.moduleVoiceRouteOwnerGeneration = 0
+	a.moduleVoiceRoutePendingOwner = 0
+	if hardwareLost {
+		a.moduleVoiceTeardownInProgress = false
+	}
 	a.moduleVoiceMu.Unlock()
 }
 
@@ -198,6 +222,9 @@ func (a *app) startModuleVoiceRoute(directory string) error {
 	defer a.voiceUSBTransition.Unlock()
 	a.moduleVoiceMu.Lock()
 	defer a.moduleVoiceMu.Unlock()
+	if a.moduleVoiceTeardownInProgress {
+		return errModuleVoiceTeardownInProgress
+	}
 	if ready, _ := a.moduleVoiceRouteReady(); ready {
 		a.moduleVoiceRoute = true
 		return nil
@@ -236,7 +263,7 @@ func (a *app) selfTestModuleVoiceRoute(directory string) error {
 	if err := a.startModuleVoiceRoute(directory); err != nil {
 		return err
 	}
-	if err := a.stopModuleVoiceRoute(directory); err != nil {
+	if err := a.stopModuleVoiceRouteSafely(2 * time.Second); err != nil {
 		return fmt.Errorf("语音路由已启动，但安全回滚未通过：%w", err)
 	}
 	return nil

@@ -320,6 +320,22 @@ struct TrafficSnapshot: Decodable {
     }
 }
 
+enum NetworkTrafficPresentation: Equatable {
+    case available
+    case cellularDataDisabled
+    case unavailable
+}
+
+func networkTrafficPresentation(
+    _ traffic: TrafficSnapshot,
+    usbnetEnabled: Bool
+) -> NetworkTrafficPresentation {
+    if traffic.available {
+        return .available
+    }
+    return usbnetEnabled ? .unavailable : .cellularDataDisabled
+}
+
 /// POST /api/network/check-4g、check-proxy
 struct CheckResult: Decodable {
     let ok: Bool
@@ -371,6 +387,150 @@ struct CallStatus: Decodable, Equatable {
         case dtmfAvailable = "dtmf_available"
         case postDialState = "post_dial_state"
         case postDialError = "post_dial_error"
+    }
+}
+
+struct VoiceVerificationAudioStatus: Decodable {
+    let active: Bool
+    let expiresAt: Date?
+    let allowedNumbers: [String]
+    let answered: Bool
+    let consumed: Bool
+    let audioAuthorized: Bool
+    let sessionID: String?
+    let lastError: String?
+
+    static let inactive = VoiceVerificationAudioStatus(
+        active: false, expiresAt: nil, allowedNumbers: [], answered: false,
+        consumed: false, audioAuthorized: false, sessionID: nil, lastError: nil)
+
+    enum CodingKeys: String, CodingKey {
+        case active, answered, consumed
+        case expiresAt = "expires_at"
+        case allowedNumbers = "allowed_numbers"
+        case audioAuthorized = "audio_authorized"
+        case sessionID = "session_id"
+        case lastError = "last_error"
+    }
+}
+
+struct VoiceVerificationArmRequest: Encodable {
+    let durationSeconds: Int
+    let allowedNumbers: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case durationSeconds = "duration_seconds"
+        case allowedNumbers = "allowed_numbers"
+    }
+}
+
+struct AgentAudioFormatStatus: Decodable {
+    let encoding: String
+    let sampleRate: Int
+    let channels: Int
+    let frameMilliseconds: Int
+    let frameBytes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case encoding, channels
+        case sampleRate = "sample_rate"
+        case frameMilliseconds = "frame_ms"
+        case frameBytes = "frame_bytes"
+    }
+}
+
+struct AgentAudioCaptureStatus: Decodable {
+    let sessionID: String
+    let framesReceived: UInt64
+    let nonzeroFrames: UInt64
+    let bytesReceived: UInt64
+    let peakSample: Int
+    let error: String?
+    let transcript: String?
+    let transcriptFinal: Bool
+    let verificationCode: String?
+    let resultExpiresAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case error, transcript
+        case sessionID = "session_id"
+        case framesReceived = "frames_received"
+        case nonzeroFrames = "nonzero_frames"
+        case bytesReceived = "bytes_received"
+        case peakSample = "peak_sample"
+        case transcriptFinal = "transcript_final"
+        case verificationCode = "verification_code"
+        case resultExpiresAt = "result_expires_at"
+    }
+}
+
+struct AgentAudioStatus: Decodable {
+    let compiled: Bool
+    let transportReady: Bool
+    let moduleIOReady: Bool
+    let pcmTransportAvailable: Bool
+    let voiceAgentAvailable: Bool
+    let active: Bool
+    let socketPath: String?
+    let clientConnected: Bool
+    let captureActive: Bool
+    let captureSessionID: String?
+    let framesReceived: UInt64
+    let nonzeroFrames: UInt64
+    let bytesReceived: UInt64
+    let peakSample: Int
+    let captureError: String?
+    let lastCapture: AgentAudioCaptureStatus?
+    let asrAvailable: Bool
+    let asrCompiled: Bool
+    let asrRunning: Bool
+    let asrError: String?
+    let ttsAvailable: Bool
+    let format: AgentAudioFormatStatus
+    let error: String?
+    let transcript: String?
+    let transcriptFinal: Bool
+    let verificationCode: String?
+
+    var effectiveASRAvailable: Bool {
+        asrCompiled && asrRunning && asrError == nil
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case compiled, active, format, error, transcript
+        case transportReady = "transport_ready"
+        case moduleIOReady = "module_io_ready"
+        case pcmTransportAvailable = "pcm_transport_available"
+        case voiceAgentAvailable = "voice_agent_available"
+        case socketPath = "socket_path"
+        case clientConnected = "client_connected"
+        case captureActive = "capture_active"
+        case captureSessionID = "capture_session_id"
+        case framesReceived = "frames_received"
+        case nonzeroFrames = "nonzero_frames"
+        case bytesReceived = "bytes_received"
+        case peakSample = "peak_sample"
+        case captureError = "capture_error"
+        case lastCapture = "last_capture"
+        case asrAvailable = "asr_available"
+        case asrCompiled = "asr_compiled"
+        case asrRunning = "asr_running"
+        case asrError = "asr_error"
+        case ttsAvailable = "tts_available"
+        case transcriptFinal = "transcript_final"
+        case verificationCode = "verification_code"
+    }
+}
+
+enum VoiceVerificationAudioPolicy {
+    static func reservesAgentAudio(callSessionID: String?, callActive: Bool,
+                                   verification: VoiceVerificationAudioStatus) -> Bool {
+        callActive
+            && verification.answered
+            && verification.consumed
+            && verification.audioAuthorized
+            && callSessionID != nil
+            && callSessionID == verification.sessionID
     }
 }
 

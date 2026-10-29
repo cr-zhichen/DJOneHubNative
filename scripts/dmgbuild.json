@@ -1,6 +1,6 @@
 {
-  "title": "DJOneHub",
-  "volume_name": "DJOneHub",
+  "title": "Flame DJ Hub",
+  "volume_name": "Flame DJ Hub",
   "format": "UDZO",
   "background": "scripts/dmg-background.png",
   "files": [],
@@ -23,8 +23,8 @@
       "x": 180,
       "y": 228,
       "type": "file",
-      "path": "dist/DJOneHub-arm64.app",
-      "name": "DJOneHub.app"
+      "path": "dist/Flame DJ Hub-arm64.app",
+      "name": "Flame DJ Hub.app"
     },
     {
       "x": 480,

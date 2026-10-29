@@ -105,7 +105,7 @@ private struct ModernDJOneHubNativeApp: App {
     private let launchSilently = AppLaunchMode.shouldLaunchSilently
 
     var body: some Scene {
-        Window("DJOneHub", id: AppSceneID.mainWindow) {
+        Window("Flame DJ Hub", id: AppSceneID.mainWindow) {
             MainAppContent(appDelegate: appDelegate, dependencies: dependencies)
         }
         .windowStyle(.titleBar)
@@ -121,7 +121,7 @@ private struct LegacyDJOneHubNativeApp: App {
     @StateObject private var dependencies = AppDependencies()
 
     var body: some Scene {
-        Window("DJOneHub", id: AppSceneID.mainWindow) {
+        Window("Flame DJ Hub", id: AppSceneID.mainWindow) {
             MainAppContent(appDelegate: appDelegate, dependencies: dependencies)
         }
         .windowStyle(.titleBar)
@@ -486,7 +486,7 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate,
         }
         return NSImage(
             systemSymbolName: "antenna.radiowaves.left.and.right",
-            accessibilityDescription: "DJOneHub")
+            accessibilityDescription: "Flame DJ Hub")
     }
 
     private func signalImage(for dbm: Int) -> NSImage {
@@ -634,7 +634,7 @@ struct MenuBarPresentation {
         } else {
             image = NSImage(
                 systemSymbolName: "antenna.radiowaves.left.and.right",
-                accessibilityDescription: "DJOneHub")
+                accessibilityDescription: "Flame DJ Hub")
         }
 
         return MenuBarPresentation(
@@ -1220,7 +1220,7 @@ private struct MenuBarDashboardPanel: View {
         {
             return operatorName
         }
-        return "DJOneHub"
+        return "Flame DJ Hub"
     }
 
     private var networkDetail: String {
@@ -1456,7 +1456,7 @@ private struct MenuBarDashboardPanel: View {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "通知权限未开启"
-        alert.informativeText = "请在系统设置中允许 DJOneHub 发送通知。"
+        alert.informativeText = "请在系统设置中允许 Flame DJ Hub 发送通知。"
         alert.addButton(withTitle: "打开通知设置")
         alert.addButton(withTitle: "取消")
         if alert.runModal() == .alertFirstButtonReturn {

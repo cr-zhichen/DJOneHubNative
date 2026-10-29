@@ -76,3 +76,23 @@ func TestSelectModuleTrafficInterfaceDoesNotFallback(t *testing.T) {
 		}
 	})
 }
+
+func TestHasModuleNetworkInterfaceRequiresMarkedModuleService(t *testing.T) {
+	interfaces := []macNetInterface{
+		{Name: "en8", Status: "active", Kind: "ethernet"},
+	}
+
+	if hasModuleNetworkInterface(interfaces, nil) {
+		t.Fatal("an unrelated active USB Ethernet interface must not be reported as the modem network")
+	}
+	services := []networkService{
+		{Name: "Mac", Device: "en8", USB: true},
+	}
+	if hasModuleNetworkInterface(interfaces, services) {
+		t.Fatal("an unmarked Apple NCM service must not be reported as the modem network")
+	}
+	services[0].Module = true
+	if !hasModuleNetworkInterface(interfaces, services) {
+		t.Fatal("an active interface attached to a marked module service must be reported")
+	}
+}

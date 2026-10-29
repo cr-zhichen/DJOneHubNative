@@ -112,16 +112,56 @@ type app struct {
 	// 语音功能（USB 音频）开关
 	voiceEnabled bool
 
+	// Agent PCM 数据平面由原生 App 托管；后端保存传输状态，并在一次性验证码通话中作为受控客户端采集下行 PCM。
+	agentAudioMu                sync.RWMutex
+	agentAudio                  agentAudioState
+	agentAudioResultExpiryTimer *time.Timer
+	agentPCMMu                  sync.Mutex
+	agentPCMCancel              context.CancelFunc
+	agentPCMSessionID           string
+	agentPCMGeneration          uint64
+	agentPCMRunner              agentPCMRunnerFunc
+	ttsProbeMu                  sync.Mutex
+	ttsProbeInFlight            bool
+	ttsProbeLastAt              time.Time
+	ttsProvider                 ttsProvider
+
+	// 一次性语音验证码接听窗口：仅接听用户明确允许的号码。
+	voiceVerificationMu         sync.Mutex
+	voiceVerification           *voiceVerificationWindow
+	voiceVerificationGeneration uint64
+	voiceVerificationAnswer     func() error
+
 	// 通话模式：USB 初始化、运行时下载与模块侧语音路由状态。
 	callModeMu        sync.RWMutex
 	callModeRefreshMu sync.Mutex
 	callMode          callModeStatus
 	callModeOperation bool
 
-	moduleVoiceMu       sync.Mutex
-	voiceUSBTransition  sync.RWMutex
-	moduleVoicePrepared bool
-	moduleVoiceRoute    bool
+	moduleVoiceMu                    sync.Mutex
+	voiceUSBTransition               sync.RWMutex
+	moduleVoicePrepared              bool
+	moduleVoiceRoute                 bool
+	moduleVoiceRouteStarting         bool
+	moduleVoiceRouteStartGeneration  uint64
+	moduleVoiceAutoStart             bool
+	moduleVoiceRouteStart            func(string) error
+	moduleVoiceRouteStop             func(string) error
+	moduleVoiceRouteSettle           func()
+	moduleVoiceRouteAttemptedSession string
+	moduleVoiceRouteLastError        string
+	moduleVoiceRouteOwnerSession     string
+	moduleVoiceRouteOwnerGeneration  uint64
+	moduleVoiceRoutePendingOwner     uint64
+	moduleVoiceResetGeneration       uint64
+	moduleVoiceRecoverySession       string
+	moduleVoiceRecoveryInProgress    bool
+	moduleVoiceRecoveryGeneration    uint64
+	moduleVoiceRecoveryActive        uint64
+	moduleVoiceRecoveryExhausted     string
+	moduleVoiceTeardownMu            sync.Mutex
+	moduleVoiceTeardownInProgress    bool
+	moduleVoiceTransitionGeneration  uint64
 
 	// 来电事件缓存（URC 驱动），供通话状态查询在 CLCC 失败/无条目时兜底
 	callMu          sync.Mutex
@@ -247,12 +287,14 @@ func main() {
 			usbDevice := discoverDJIUSBDevice()
 			usbATDevice, usbATErr := openDJIUSBAT()
 			instance := &app{
-				port:            "未发现 AT 串口",
-				discoveryError:  err.Error(),
-				usbDevice:       usbDevice,
-				usbAT:           usbATDevice,
-				smsPollInterval: 8 * time.Second,
-				smsReassembler:  smscodec.NewReassembler(),
+				voiceUSBTransition:   sync.RWMutex{},
+				moduleVoiceAutoStart: true,
+				port:                 "未发现 AT 串口",
+				discoveryError:       err.Error(),
+				usbDevice:            usbDevice,
+				usbAT:                usbATDevice,
+				smsPollInterval:      8 * time.Second,
+				smsReassembler:       smscodec.NewReassembler(),
 			}
 			if usbDevice != nil {
 				log.Printf("DJI USB device detected without AT serial port: %s %s (%s:%s)",
@@ -293,7 +335,7 @@ func main() {
 		log.Fatalf("create modem manager: %v", err)
 	}
 
-	instance := &app{modem: manager, port: port, smsPollInterval: 8 * time.Second}
+	instance := &app{modem: manager, port: port, smsPollInterval: 8 * time.Second, moduleVoiceAutoStart: true}
 	manager.SetSMSCallback(instance.recordSMS)
 	manager.SetRingCallback(instance.onURCRing)
 	manager.SetClipCallback(instance.onURCClip)
@@ -383,6 +425,7 @@ func (a *app) installESIMManager(manager *esim.Manager, switchAllowed bool) bool
 
 func serve(instance *app, listen string) {
 	defer instance.cancelCallTones()
+	instance.configureTTSFromEnvironment()
 	if instance.routing != nil {
 		defer instance.routing.Close()
 	}
@@ -392,6 +435,7 @@ func serve(instance *app, listen string) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go instance.runVoiceVerificationAutomation(ctx)
 
 	ln, err := listenWith(listen, server)
 	if err != nil {
@@ -417,7 +461,7 @@ func serve(instance *app, listen string) {
 		if voiceRouteActive {
 			cleanupDone := make(chan struct{})
 			go func() {
-				if err := instance.stopModuleVoiceRoute(instance.runtimeDirectory()); err != nil {
+				if err := instance.stopModuleVoiceRouteSafely(3 * time.Second); err != nil {
 					log.Printf("stop module voice route during shutdown: %v", err)
 				}
 				close(cleanupDone)
@@ -798,7 +842,7 @@ func (a *app) markUSBATDetached(reason string) {
 	a.discoveryError = "DJI USB device is not connected"
 	a.usbATBackoffUntil = time.Now().Add(2 * time.Second)
 	a.usbATBackoffErr = reason
-	a.resetModuleVoiceState()
+	a.resetModuleVoiceStateAfterHardwareLoss()
 	if manager, _ := a.currentESIMManager(); manager != nil {
 		manager.NotifyModemReset()
 	}
@@ -807,6 +851,12 @@ func (a *app) markUSBATDetached(reason string) {
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/agent/capabilities", a.agentCapabilities)
+	mux.HandleFunc("PUT /api/agent/audio/transport", a.agentAudioTransport)
+	mux.HandleFunc("GET /api/agent/audio/status", a.agentAudioStatus)
+	mux.HandleFunc("PUT /api/agent/audio/transcript", a.agentAudioTranscript)
+	mux.HandleFunc("POST /api/agent/audio/tts/probe", a.agentTTSProbe)
+	mux.HandleFunc("POST /api/agent/audio/start", a.agentAudioStart)
+	mux.HandleFunc("POST /api/agent/audio/stop", a.agentAudioStop)
 	mux.HandleFunc("GET /api/health", a.health)
 	mux.HandleFunc("GET /api/status", a.status)
 	mux.HandleFunc("GET /api/sms", a.listSMS)
@@ -833,6 +883,9 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/routing/stop", a.stopRouting)
 	mux.HandleFunc("POST /api/routing/uninstall", a.uninstallRoutingService)
 	mux.HandleFunc("GET /api/call/status", a.callStatus)
+	mux.HandleFunc("GET /api/call/voice-verification", a.voiceVerificationStatus)
+	mux.HandleFunc("POST /api/call/voice-verification/arm", a.voiceVerificationArm)
+	mux.HandleFunc("POST /api/call/voice-verification/disarm", a.voiceVerificationDisarm)
 	mux.HandleFunc("GET /api/calls", a.listCalls)
 	mux.HandleFunc("POST /api/calls/clear", a.clearCalls)
 	mux.HandleFunc("POST /api/calls/delete", a.deleteCall)
@@ -1474,8 +1527,11 @@ func (ar *smsArchive) clear() {
 }
 
 func (a *app) initSMSArchive() {
-	dir := filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "DJOneHubNative")
-	_ = os.MkdirAll(dir, 0o700)
+	dir, err := prepareAppSupportDirectory()
+	if err != nil {
+		dir = defaultAppSupportDirectory()
+		_ = os.MkdirAll(dir, 0o700)
+	}
 	a.dataDir = dir
 	a.callMode = newCallModeStatus("checking", "正在检查通话模式")
 	a.callMode.RuntimePath = a.runtimeDirectory()
@@ -2044,7 +2100,18 @@ func (a *app) networkDiagnostic(w http.ResponseWriter, _ *http.Request) {
 		Raw:           raw,
 		Errors:        errs,
 	}
-	diag.USBNetworkPresent = hasLikelyUSBNetworkInterface(diag.MacInterfaces)
+	moduleProduct := ""
+	if diag.USBDevice != nil {
+		moduleProduct = strings.TrimSpace(diag.USBDevice.Product)
+	}
+	if moduleProduct != "" {
+		services, err := macNetworkServiceOrder(moduleProduct)
+		if err != nil {
+			errs["network_services"] = err.Error()
+		} else {
+			diag.USBNetworkPresent = hasModuleNetworkInterface(diag.MacInterfaces, services)
+		}
+	}
 
 	commands := map[string]string{
 		"usbnet":  `AT+QCFG="usbnet"`,
@@ -2667,7 +2734,7 @@ func (a *app) callHangup(w http.ResponseWriter, _ *http.Request) {
 	a.moduleVoiceMu.Unlock()
 	warning := ""
 	if voiceRouteActive {
-		if stopErr := a.stopModuleVoiceRoute(a.runtimeDirectory()); stopErr != nil {
+		if stopErr := a.stopModuleVoiceRouteSafely(2 * time.Second); stopErr != nil {
 			log.Printf("stop module voice route after hangup: %v", stopErr)
 			warning = "通话已挂断，但模块音频路由清理未完全确认：" + stopErr.Error()
 		}
@@ -3044,13 +3111,9 @@ func classifyMacInterfaceName(name string) string {
 	}
 }
 
-func hasLikelyUSBNetworkInterface(interfaces []macNetInterface) bool {
-	for _, item := range interfaces {
-		if item.Kind == "ethernet" && item.Name != "en0" && item.Status == "active" {
-			return true
-		}
-	}
-	return false
+func hasModuleNetworkInterface(interfaces []macNetInterface, services []networkService) bool {
+	name, active := selectModuleTrafficInterface(interfaces, services)
+	return name != "" && active
 }
 
 // selectModuleTrafficInterface 只返回已被标记为 4G 模块的网卡。

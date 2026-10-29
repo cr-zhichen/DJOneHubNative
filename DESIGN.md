@@ -1,8 +1,8 @@
-# DJOneHub Interface Design
+# Flame DJ Hub Interface Design
 
 ## Product character
 
-DJOneHub is a focused macOS utility for operating a connected 4G module. The interface should feel native, compact, and operationally trustworthy: important state is visible, dangerous ambiguity is avoided, and the app does not imitate a consumer VPN client.
+Flame DJ Hub is a focused macOS utility for operating a connected 4G module. The interface should feel native, compact, and operationally trustworthy: important state is visible, dangerous ambiguity is avoided, and the app does not imitate a consumer VPN client.
 
 ## Native visual system
 
@@ -21,7 +21,7 @@ DJOneHub is a focused macOS utility for operating a connected 4G module. The int
 
 ## Application routing interaction contract
 
-- Routing is off after every DJOneHub launch. Configuration persists; enabled runtime state does not.
+- Routing is off after every Flame DJ Hub launch. Configuration persists; enabled runtime state does not.
 - Independent routing installs its privileged TUN service on first enable. Ordinary Stop and app exit stop the TUN but keep that service installed, so later enables do not request authorization again.
 - A secondary destructive `卸载…` action appears only when the TUN service is installed. It confirms intent, stops an active independent session first, removes all privileged components, and preserves routing configuration; the next enable requests administrator authorization again.
 - Independent routing exposes one explicit default exit. Per-application rules override it; existing version 1 configurations migrate to `系统直连` without dropping application rules.

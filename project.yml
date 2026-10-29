@@ -1,6 +1,6 @@
 name: DJOneHubNative
 options:
-  bundleIdPrefix: com.djonehub
+  bundleIdPrefix: cn.flameapi
   createIntermediateGroups: true
   deploymentTarget:
     macOS: "13.0"
@@ -16,12 +16,12 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "13.0"
     CLANG_ENABLE_MODULES: YES
     CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_IDENTITY: "DJOneHub Dev Local Signing"
     ENABLE_APP_SANDBOX: NO
     ENABLE_HARDENED_RUNTIME: NO
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    DISPLAY_NAME: "DJOneHub"
+    DISPLAY_NAME: "Flame DJ Hub"
 
 targets:
   DJOneHubNative:
@@ -38,7 +38,7 @@ targets:
       - package: Awesome
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.djonehub.native
+        PRODUCT_BUNDLE_IDENTIFIER: cn.flameapi.flamedjhub.dev
         PRODUCT_NAME: DJOneHub
         INFOPLIST_FILE: app/Resources/Info.plist
         GENERATE_INFOPLIST_FILE: NO
@@ -148,10 +148,7 @@ targets:
             [ -f "$LIBUSB" ] || { echo "错误：未找到 libusb (${LIBUSB})，请设置 LIBUSB_DYLIB_ARM64 / LIBUSB_DYLIB_X86_64" >&2; exit 1; }
             cp "$LIBUSB" "${BACKEND_DIR}/libusb-1.0.0.dylib"
           fi
-          old=$(otool -L "${BACKEND_DIR}/djonehubd" 2>/dev/null | awk '/libusb/ {print $1; exit}')
-          if [ -n "$old" ]; then
-            install_name_tool -change "$old" "@loader_path/libusb-1.0.0.dylib" "${BACKEND_DIR}/djonehubd" || true
-          fi
+          "${PROJECT_DIR}/scripts/rewrite-libusb-dependency.sh" "${BACKEND_DIR}/djonehubd"
 
           # 独立进程网络核心：固定源码提交构建，保持与主后端许可证边界分离。
           "${PROJECT_DIR}/scripts/build-network-core.sh" \
@@ -167,8 +164,9 @@ targets:
             /usr/bin/codesign --force --sign - --timestamp=none "$code"
           done
 
-          # 增量构建时 Xcode 可能跳过外层签名；重新封装资源签名，首次构建仍会由 Xcode 最终签名覆盖。
+          # 增量构建时 Xcode 可能跳过外层签名；使用固定身份重新封装，避免退化为 ad-hoc cdhash。
           APP_BUNDLE="${TARGET_BUILD_DIR}/${WRAPPER_NAME}"
           if [ -d "${APP_BUNDLE}" ]; then
-            /usr/bin/codesign --force --sign - --timestamp=none "${APP_BUNDLE}"
+            [ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ] || { echo "错误：缺少固定签名身份" >&2; exit 1; }
+            /usr/bin/codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" --timestamp=none "${APP_BUNDLE}"
           fi

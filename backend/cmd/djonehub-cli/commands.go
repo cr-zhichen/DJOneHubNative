@@ -49,6 +49,8 @@ func dispatch(ctx context.Context, options globalOptions, args []string, stdout 
 		return smsCommand(ctx, options, args[1:])
 	case "call":
 		return callCommand(ctx, options, args[1:], stdout)
+	case "agent-audio":
+		return agentAudioCommand(ctx, options, args[1:])
 	case "esim":
 		return esimCommand(ctx, options, args[1:])
 	case "agent":
@@ -278,8 +280,72 @@ func callCommand(ctx context.Context, options globalOptions, args []string, stdo
 		return callAnswerCommand(ctx, options, args[1:])
 	case "hangup":
 		return callHangupCommand(ctx, options, args[1:])
+	case "voice-verification":
+		return callVoiceVerificationCommand(ctx, options, args[1:])
 	default:
-		return commandResult{Command: "call"}, usageError("usage: djonehub call status|history|events|dial|answer|hangup")
+		return commandResult{Command: "call"}, usageError("usage: djonehub call status|history|events|dial|answer|hangup|voice-verification")
+	}
+}
+
+func callVoiceVerificationCommand(ctx context.Context, options globalOptions, args []string) (commandResult, *commandError) {
+	if len(args) == 0 {
+		return commandResult{Command: "call.voice-verification"}, usageError("usage: djonehub call voice-verification status|arm|disarm")
+	}
+	switch args[0] {
+	case "status":
+		if len(args) != 1 {
+			return commandResult{Command: "call.voice-verification.status"}, usageError("voice-verification status does not accept arguments")
+		}
+		return getCommand(ctx, options, "call.voice-verification.status", "/api/call/voice-verification")
+	case "arm":
+		set := newFlagSet("call voice-verification arm")
+		duration := set.Int("duration", 300, "one-shot window in seconds, 30..900")
+		number := set.String("number", "", "allowed incoming phone number")
+		requestID := set.String("request-id", "", "idempotency key")
+		dryRun := set.Bool("dry-run", false, "validate without arming")
+		yes := set.Bool("yes", false, "confirm arming")
+		if err := parseFlagSet(set, args[1:]); err != nil {
+			return commandResult{Command: "call.voice-verification.arm"}, err
+		}
+		if *duration < 30 || *duration > 900 {
+			return commandResult{Command: "call.voice-verification.arm"}, usageError("--duration must be 30..900")
+		}
+		if _, validationErr := validateCallNumber(*number); validationErr != nil {
+			return commandResult{Command: "call.voice-verification.arm"}, validationErr
+		}
+		id, idErr := ensureRequestID("voice-verification", *requestID)
+		if idErr != nil {
+			return commandResult{Command: "call.voice-verification.arm"}, idErr
+		}
+		payload := map[string]any{"duration_seconds": *duration, "allowed_numbers": []string{*number}}
+		if *dryRun {
+			return dryRunResult("call.voice-verification.arm", "call.answer", payload, id), nil
+		}
+		if !*yes {
+			return commandResult{Command: "call.voice-verification.arm", RequestID: id}, confirmationError("arming one-shot voice verification answering", id)
+		}
+		return mutateCommand(ctx, options, "call.voice-verification.arm", http.MethodPost, "/api/call/voice-verification/arm", payload, id)
+	case "disarm":
+		set := newFlagSet("call voice-verification disarm")
+		requestID := set.String("request-id", "", "idempotency key")
+		dryRun := set.Bool("dry-run", false, "validate without disarming")
+		yes := set.Bool("yes", false, "confirm disarming")
+		if err := parseFlagSet(set, args[1:]); err != nil {
+			return commandResult{Command: "call.voice-verification.disarm"}, err
+		}
+		id, idErr := ensureRequestID("voice-verification", *requestID)
+		if idErr != nil {
+			return commandResult{Command: "call.voice-verification.disarm"}, idErr
+		}
+		if *dryRun {
+			return dryRunResult("call.voice-verification.disarm", "call.answer", map[string]any{}, id), nil
+		}
+		if !*yes {
+			return commandResult{Command: "call.voice-verification.disarm", RequestID: id}, confirmationError("disarming voice verification answering", id)
+		}
+		return mutateCommand(ctx, options, "call.voice-verification.disarm", http.MethodPost, "/api/call/voice-verification/disarm", nil, id)
+	default:
+		return commandResult{Command: "call.voice-verification"}, usageError("usage: djonehub call voice-verification status|arm|disarm")
 	}
 }
 
@@ -417,6 +483,40 @@ func callHangupCommand(ctx context.Context, options globalOptions, args []string
 		return dryRunResult("call.hangup", "call.hangup", map[string]any{}, id), nil
 	}
 	return mutateCommand(ctx, options, "call.hangup", http.MethodPost, "/api/call/hangup", nil, id)
+}
+
+func agentAudioCommand(ctx context.Context, options globalOptions, args []string) (commandResult, *commandError) {
+	if len(args) == 0 {
+		return commandResult{Command: "agent-audio"}, usageError("usage: djonehub agent-audio status|start|stop")
+	}
+	if args[0] == "status" {
+		if len(args) != 1 {
+			return commandResult{Command: "agent-audio.status"}, usageError("agent-audio status does not accept arguments")
+		}
+		return getCommand(ctx, options, "agent-audio.status", "/api/agent/audio/status")
+	}
+	if args[0] != "start" && args[0] != "stop" {
+		return commandResult{Command: "agent-audio"}, usageError("usage: djonehub agent-audio status|start|stop")
+	}
+	name := "agent-audio." + args[0]
+	set := newFlagSet("agent-audio " + args[0])
+	requestID := set.String("request-id", "", "idempotency key")
+	dryRun := set.Bool("dry-run", false, "validate without changing transport state")
+	yes := set.Bool("yes", false, "confirm execution")
+	if err := parseFlagSet(set, args[1:]); err != nil {
+		return commandResult{Command: name}, err
+	}
+	id, idErr := ensureRequestID("audio", *requestID)
+	if idErr != nil {
+		return commandResult{Command: name}, idErr
+	}
+	if *dryRun {
+		return dryRunResult(name, "call.agent_audio", map[string]any{}, id), nil
+	}
+	if !*yes {
+		return commandResult{Command: name, RequestID: id}, confirmationError(args[0]+"ing Agent PCM transport", id)
+	}
+	return mutateCommand(ctx, options, name, http.MethodPost, "/api/agent/audio/"+args[0], nil, id)
 }
 
 func esimCommand(ctx context.Context, options globalOptions, args []string) (commandResult, *commandError) {

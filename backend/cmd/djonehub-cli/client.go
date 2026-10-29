@@ -165,14 +165,14 @@ func defaultSupportDirectory() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, "Library", "Application Support", "DJOneHubNative")
+	return filepath.Join(home, "Library", "Application Support", "FlameDJHub")
 }
 
 func defaultSocketPath() string {
 	if value := strings.TrimSpace(os.Getenv("DJONEHUB_SOCKET")); value != "" {
 		return value
 	}
-	return filepath.Join(defaultSupportDirectory(), "djonehub.sock")
+	return filepath.Join(defaultSupportDirectory(), "flame-dj-hub.sock")
 }
 
 func defaultConfigPath() string {

@@ -171,7 +171,7 @@ struct IncomingCallCardContent: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
-            .accessibilityHint("打开 DJOneHub 通话界面")
+            .accessibilityHint("打开 Flame DJ Hub 通话界面")
             .accessibilityAction {
                 card.openCallPage()
             }

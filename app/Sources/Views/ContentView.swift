@@ -7,7 +7,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case calls = "通话"
     case esim = "eSIM 卡片"
     case routing = "应用分流"
-    case ai = "AI 与 CLI"
+    case ai = "权限与 CLI"
     case debug = "调试与诊断"
     case about = "关于与更新"
 
@@ -57,7 +57,7 @@ struct ContentView: View {
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 150, ideal: 170)
-            .navigationTitle("DJOneHub")
+            .navigationTitle("Flame DJ Hub")
         } detail: {
             switch selection ?? .home {
             case .home:
