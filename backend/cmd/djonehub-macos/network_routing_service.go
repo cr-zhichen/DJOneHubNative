@@ -18,7 +18,7 @@ import (
 
 const (
 	routingServiceLabel           = "com.djonehub.routing"
-	routingServiceProtocolVersion = "5-sing-box-1.13.16-djonehub.1"
+	routingServiceProtocolVersion = "5-sing-box-1.13.16-djonehub.2"
 	routingServiceDirectory       = "/Library/PrivilegedHelperTools/com.djonehub.routing"
 	routingServiceHelperPath      = routingServiceDirectory + "/djonehub-routing-helper"
 	routingServiceCorePath        = routingServiceDirectory + "/sing-box"

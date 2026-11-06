@@ -181,16 +181,21 @@ func (m *routingManager) preflightConfig(config routingConfig, moduleProduct str
 		config = normalized
 	}
 
-	module, err := resolveRoutingModuleInterface(moduleProduct)
-	if err != nil {
-		result.Issues = append(result.Issues, err.Error())
-	} else {
+	module, moduleErr := resolveRoutingModuleInterface(moduleProduct)
+	if moduleErr == nil {
 		result.ModuleInterface = &module
 		if module.IPv6 == "" {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("模块网卡 %s 未获得全局 IPv6 地址；IPv4 可用，但 4G IPv6 暂不可用", module.Name))
 		} else if !routingInterfaceHasScopedIPv6DefaultRoute(module.Name) {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("模块网卡 %s 已获得 IPv6 地址，但没有可用的 IPv6 默认路由", module.Name))
 		}
+	} else if routingConfigUsesModule(config) {
+		// 分流规则确实要经模块出口：保持为阻断问题。
+		result.Issues = append(result.Issues, moduleErr.Error())
+	} else {
+		// 应用分流本质是"给应用指定出口"，不依赖模块本身存在：
+		// 系统直连绑默认网卡、SOCKS 出口走代理，无模块也应可用。
+		result.Warnings = append(result.Warnings, "未检测到可用的 4G 模块网卡；当前分流规则不使用模块直连，应用分流仍可启用")
 	}
 
 	if config.Mode == routingModeIndependent {
@@ -249,7 +254,7 @@ func (m *routingManager) Start(ctx context.Context, moduleProduct string) (routi
 	if len(preflight.Issues) > 0 {
 		return fail(http.StatusServiceUnavailable, errors.New(strings.Join(preflight.Issues, "；")))
 	}
-	if preflight.ModuleInterface == nil {
+	if preflight.ModuleInterface == nil && routingConfigUsesModule(config) {
 		return fail(http.StatusServiceUnavailable, errors.New("没有找到可用的 4G 模块网卡"))
 	}
 
@@ -258,7 +263,7 @@ func (m *routingManager) Start(ctx context.Context, moduleProduct string) (routi
 	if config.Mode == routingModeIndependent {
 		coreConfig, err = buildIndependentCoreConfig(
 			config,
-			*preflight.ModuleInterface,
+			preflight.ModuleInterface,
 			preflight.SystemInterface,
 			preflight.SystemSOCKSBypassPatterns,
 		)

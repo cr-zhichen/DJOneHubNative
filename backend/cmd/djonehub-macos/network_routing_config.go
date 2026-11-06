@@ -416,9 +416,28 @@ func isBroadTUNCaptureDestination(destination string) bool {
 	return err == nil && prefix <= 8
 }
 
+// routingConfigUsesModule 判断当前分流配置是否依赖 4G 模块出口。
+// Clash 托管模式的唯一出口就是模块直连，必须依赖模块；
+// 独立模式只有默认出口或某条应用规则使用「模块直连」时才依赖模块，
+// 仅用系统直连 / 本机 SOCKS 出口的配置在没有模块时也应能正常启用。
+func routingConfigUsesModule(config routingConfig) bool {
+	if config.Mode != routingModeIndependent {
+		return true
+	}
+	if config.DefaultAction == routingActionModuleDirect {
+		return true
+	}
+	for _, application := range config.Applications {
+		if application.Action == routingActionModuleDirect {
+			return true
+		}
+	}
+	return false
+}
+
 func buildIndependentCoreConfig(
 	config routingConfig,
-	module routingInterfaceInfo,
+	module *routingInterfaceInfo,
 	systemInterface string,
 	systemSOCKSBypassPatterns []string,
 ) ([]byte, error) {
@@ -427,7 +446,7 @@ func buildIndependentCoreConfig(
 		return nil, err
 	}
 	systemInterface = strings.TrimSpace(systemInterface)
-	if systemInterface == "" || systemInterface == module.Name {
+	if systemInterface == "" || (module != nil && systemInterface == module.Name) {
 		return nil, errors.New("系统默认网络出口不可用")
 	}
 
@@ -457,7 +476,11 @@ func buildIndependentCoreConfig(
 
 	outbounds := []map[string]any{
 		{"type": "direct", "tag": "system-direct", "bind_interface": systemInterface},
-		buildModuleDirectOutbound(module),
+	}
+	if module != nil {
+		// 模块直连出站只在有模块时生成：规则不使用「模块直连」的场景
+		// （系统直连 / 本机 SOCKS）不需要模块网卡存在。
+		outbounds = append(outbounds, buildModuleDirectOutbound(*module))
 	}
 	if len(patternsByAction[routingActionSystemSOCKS]) > 0 || config.DefaultAction == routingActionSystemSOCKS {
 		socksOutbound := map[string]any{
@@ -502,6 +525,9 @@ func buildIndependentCoreConfig(
 	modulePatterns := patternsByAction[routingActionModuleDirect]
 	usesModuleDNS := config.DefaultAction == routingActionModuleDirect || len(modulePatterns) > 0
 	if usesModuleDNS {
+		if module == nil {
+			return nil, errors.New("分流规则使用了模块直连，但没有可用的 4G 模块网卡")
+		}
 		if net.ParseIP(module.IPv4Gateway).To4() == nil {
 			return nil, errors.New("模块网卡 IPv4 网关不可用，无法建立独立 DNS 出口")
 		}

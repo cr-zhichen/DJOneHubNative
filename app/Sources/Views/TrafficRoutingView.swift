@@ -295,9 +295,12 @@ struct TrafficRoutingView: View {
         VStack(spacing: 8) {
             readinessRow(
                 title: "4G 模块",
-                value: module.map(routingModuleDescription) ?? "未检测到",
+                value: module.map(routingModuleDescription)
+                    ?? (store.usesModule
+                        ? "未检测到（分流规则使用了模块直连）"
+                        : "未插入（当前分流不使用模块直连，不影响启用）"),
                 icon: "antenna.radiowaves.left.and.right",
-                color: module == nil ? .red : .green)
+                color: module == nil ? (store.usesModule ? .red : .orange) : .green)
 
             if store.config.mode == .independent {
                 readinessRow(
