@@ -56,6 +56,13 @@ final class DashboardStore: ObservableObject {
     @Published var usbnetEnabled = false
     @Published var usbnetLoaded = false
     @Published var busy = false
+
+    // 连接模式（Mac 完整 / iPhone/iPad）。AT 查询有真实串口开销，
+    // 不放进 2 秒轮询，只在进入首页和切换后刷新。
+    @Published var usbProfile: USBProfileStatus?
+    @Published var usbProfileLoaded = false
+    @Published var usbProfileBusy = false
+    @Published var usbProfileError: String?
     @Published private(set) var networkRecovering = false
     @Published private(set) var networkRecoveryMessage: String?
 
@@ -163,6 +170,10 @@ final class DashboardStore: ObservableObject {
         statusStale = false
         usbnetEnabled = false
         usbnetLoaded = false
+        usbProfile = nil
+        usbProfileLoaded = false
+        usbProfileBusy = false
+        usbProfileError = nil
         toast = nil
         callModeStatus = nil
         callModeActionInFlight = false
@@ -279,6 +290,51 @@ final class DashboardStore: ObservableObject {
             } catch {
                 busy = false
             }
+        }
+    }
+
+    // MARK: - 连接模式（Mac 完整 / iPhone/iPad）
+
+    func loadUSBProfile() {
+        guard case .running = backend.state else { return }
+        guard !usbProfileBusy else { return }
+        Task {
+            do {
+                let profile: USBProfileStatus = try await APIClient().get("api/usb/profile")
+                usbProfile = profile
+                usbProfileLoaded = true
+                usbProfileError = nil
+            } catch {
+                // 模块处于 iPhone/iPad 模式（UAC 关）时 AT 桥可能打不开，
+                // 保留旧数据即可，不算致命。
+                usbProfileLoaded = true
+            }
+        }
+    }
+
+    func setUSBProfile(_ mode: String) {
+        guard !usbProfileBusy else { return }
+        usbProfileBusy = true
+        usbProfileError = nil
+        Task {
+            do {
+                let client = APIClient()
+                let result: USBProfileStatus = try await client.send(
+                    "api/usb/profile", body: USBProfileRequest(mode: mode))
+                usbProfile = result
+                if let message = result.message, !message.isEmpty {
+                    toast = ToastItem(message: message, isSuccess: true)
+                }
+            } catch {
+                usbProfileError = String(describing: error)
+                toast = ToastItem(message: "切换连接模式失败：\(error)", isSuccess: false)
+            }
+            usbProfileBusy = false
+            // mobile→mac 会重启模块，等枚举稳定后再刷新状态
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            loadUSBProfile()
+            loadUSBStatus()
+            loadServices()
         }
     }
 

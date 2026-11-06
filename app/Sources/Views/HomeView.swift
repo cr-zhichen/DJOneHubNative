@@ -9,6 +9,8 @@ struct HomeView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var showingRebootConfirm = false
+    @State private var showingMobileProfileConfirm = false
+    @State private var showingMacProfileConfirm = false
     @State private var copiedValue: String?
     @State private var draggedService: Int?
     @State private var showNotifyDeniedAlert = false
@@ -39,6 +41,7 @@ struct HomeView: View {
                             launchOptionsCard
                             smsCard
                             priorityCard
+                            connectionModeCard
                         }
                     } else if store.statusStale {
                         VStack(spacing: 10) {
@@ -116,6 +119,7 @@ struct HomeView: View {
         .animation(.easeInOut(duration: 0.25), value: store.toast)
         .onAppear {
             store.loadServices()
+            store.loadUSBProfile()
             autoLaunchEnabled = AutoLaunch.isEnabled
         }
         .onReceive(NotificationCenter.default.publisher(for: AutoLaunch.didChangeNotification)) { _ in
@@ -127,6 +131,86 @@ struct HomeView: View {
         } message: {
             Text("模块重启会导致网络临时中断，正在进行的下载或写入操作会被打断。")
         }
+        .confirmationDialog("切换到 iPhone / iPad 模式？", isPresented: $showingMobileProfileConfirm, titleVisibility: .visible) {
+            Button("切换到 iPhone / iPad 模式", role: .destructive) { store.setUSBProfile("mobile") }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("会先给模块安装网络唤醒保活（需要 ADB），然后关闭 USB 音频。拔出并连接到 iPhone / iPad 后仅提供上网与短信，通话音频在移动设备侧不可用。")
+        }
+        .confirmationDialog("恢复 Mac 完整模式？", isPresented: $showingMacProfileConfirm, titleVisibility: .visible) {
+            Button("恢复 Mac 完整模式", role: .destructive) { store.setUSBProfile("mac") }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将重新开启 USB 音频并重启模块，网络会临时中断 20–40 秒。请先把模块从移动设备拔回 Mac。")
+        }
+    }
+
+    // MARK: - 连接模式
+
+    private var connectionModeCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                sectionTitle("连接模式")
+                Spacer()
+                if store.usbProfileBusy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("刷新") { store.loadUSBProfile() }
+                        .controlSize(.small)
+                }
+            }
+            if !store.usbProfileLoaded {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("读取 USB 配置…").foregroundStyle(.secondary)
+                }
+            } else if let profile = store.usbProfile {
+                HStack(spacing: 10) {
+                    Image(systemName: profile.isMobile ? "iphone.gen3" : "macbook")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(profile.isMobile ? Color.accentColor : .secondary)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(profile.isMobile ? "iPhone / iPad 模式" : "Mac 完整模式")
+                            .font(.callout.weight(.medium))
+                        Text(profile.isMobile
+                             ? "USB 音频已关闭；拔插到移动设备后仅提供上网与短信"
+                             : "上网、短信与通话音频均可用")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 4)
+                    Button(profile.isMobile ? "恢复 Mac" : "iPhone / iPad") {
+                        if profile.isMobile {
+                            showingMacProfileConfirm = true
+                        } else {
+                            showingMobileProfileConfirm = true
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(store.usbProfileBusy || store.networkRecovering)
+                }
+                if let message = profile.message, !message.isEmpty {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                }
+                if let error = store.usbProfileError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            } else {
+                Text("暂时无法读取模块 USB 配置（模块未连接或 AT 通道不可用）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
     }
 
     // MARK: - 顶部概览条
