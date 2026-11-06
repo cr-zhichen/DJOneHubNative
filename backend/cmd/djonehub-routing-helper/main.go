@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const serviceProtocolVersion = "5-sing-box-1.13.16-djonehub.1"
+const serviceProtocolVersion = "5-sing-box-1.13.16-djonehub.2"
 
 var expectedRouteExclusions = []string{
 	"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
@@ -431,7 +431,7 @@ func validateManagedCoreConfig(config managedCoreConfig) error {
 		return errors.New("unexpected TUN inbound configuration")
 	}
 
-	if len(config.Outbounds) < 2 || len(config.Outbounds) > 3 {
+	if len(config.Outbounds) < 1 || len(config.Outbounds) > 3 {
 		return errors.New("unexpected outbound count")
 	}
 	outboundTags := make(map[string]struct{}, len(config.Outbounds))
@@ -476,9 +476,9 @@ func validateManagedCoreConfig(config managedCoreConfig) error {
 	if _, exists := outboundTags["system-direct"]; !exists {
 		return errors.New("system direct outbound is missing")
 	}
-	if _, exists := outboundTags["module-direct"]; !exists {
-		return errors.New("module direct outbound is missing")
-	}
+	// module-direct 是可选的：应用分流本质是给应用指定出口，
+	// 规则不使用「模块直连」时允许没有模块网卡。
+	// 若出现 DNS 配置，DNS 必须经 module-direct 出站，下面会校验。
 	if systemInterface == moduleInterface {
 		return errors.New("system and module direct outbounds must use different interfaces")
 	}
@@ -533,6 +533,10 @@ func validateManagedCoreConfig(config managedCoreConfig) error {
 	}
 	if hijackDNSRules != 1 || len(config.DNS.Servers) != 1 || config.DNS.Final != "module-dns" {
 		return errors.New("unexpected managed DNS configuration")
+	}
+	// DNS 出站经模块网关解析，出现 DNS 配置就必须有模块直连出站。
+	if _, exists := outboundTags["module-direct"]; !exists {
+		return errors.New("DNS configuration exists without module direct outbound")
 	}
 	dnsServer := config.DNS.Servers[0]
 	serverIP := net.ParseIP(dnsServer.Server)

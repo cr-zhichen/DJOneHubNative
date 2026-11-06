@@ -22,6 +22,91 @@ func testRoutingModuleInterface() routingInterfaceInfo {
 	}
 }
 
+func testModuleInterfacePtr() *routingInterfaceInfo {
+	module := testRoutingModuleInterface()
+	return &module
+}
+
+// 应用分流本质是给应用指定出口：独立模式下只要规则不用「模块直连」，
+// 没有 4G 模块也应能生成核心配置并启用分流。
+func TestRoutingConfigUsesModule(t *testing.T) {
+	independentNoModule := defaultRoutingConfig()
+	independentNoModule.DefaultAction = routingActionSystemDirect
+	if routingConfigUsesModule(independentNoModule) {
+		t.Fatal("independent + system-direct default must not require module")
+	}
+
+	independentSOCKS := defaultRoutingConfig()
+	independentSOCKS.DefaultAction = routingActionSystemSOCKS
+	if routingConfigUsesModule(independentSOCKS) {
+		t.Fatal("independent + system-socks default must not require module")
+	}
+
+	withModuleApp := defaultRoutingConfig()
+	withModuleApp.Applications = []routingApplication{
+		{ID: "app", Name: "App", BundlePath: "/Applications/App.app", Action: routingActionModuleDirect},
+	}
+	if !routingConfigUsesModule(withModuleApp) {
+		t.Fatal("independent with module-direct application rule must require module")
+	}
+
+	moduleDefault := defaultRoutingConfig()
+	moduleDefault.DefaultAction = routingActionModuleDirect
+	if !routingConfigUsesModule(moduleDefault) {
+		t.Fatal("independent with module-direct default must require module")
+	}
+
+	clash := defaultRoutingConfig()
+	clash.Mode = routingModeClash
+	if !routingConfigUsesModule(clash) {
+		t.Fatal("clash managed mode always requires module")
+	}
+}
+
+func TestBuildIndependentCoreConfigWithoutModuleKeepsSystemAndSOCKSExits(t *testing.T) {
+	config := defaultRoutingConfig()
+	config.DefaultAction = routingActionSystemDirect
+	config.Applications = []routingApplication{
+		{ID: "proxy", Name: "Proxy App", BundlePath: "/Applications/Proxy.app", Action: routingActionSystemSOCKS},
+	}
+	data, err := buildIndependentCoreConfig(config, nil, "en7", nil)
+	if err != nil {
+		t.Fatalf("build config: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	outbounds := indexedObjects(t, document["outbounds"], "tag")
+	if _, exists := outbounds["module-direct"]; exists {
+		t.Fatalf("module-direct must be omitted without module: %v", outbounds)
+	}
+	if outbounds["system-direct"]["bind_interface"] != "en7" {
+		t.Fatalf("system direct=%v, want en7 binding", outbounds["system-direct"])
+	}
+	if _, exists := outbounds["system-socks"]; !exists {
+		t.Fatalf("system-socks outbound missing: %v", outbounds)
+	}
+	if route := document["route"].(map[string]any); route["final"] != "system-direct" {
+		t.Fatalf("final=%v, want system-direct", route["final"])
+	}
+	if _, exists := document["dns"]; exists {
+		t.Fatalf("dns must be absent without module usage: %v", document["dns"])
+	}
+}
+
+func TestBuildIndependentCoreConfigWithoutModuleRejectsModuleRules(t *testing.T) {
+	config := defaultRoutingConfig()
+	config.DefaultAction = routingActionSystemDirect
+	config.Applications = []routingApplication{
+		{ID: "module", Name: "Module App", BundlePath: "/Applications/Module.app", Action: routingActionModuleDirect},
+	}
+	_, err := buildIndependentCoreConfig(config, nil, "en7", nil)
+	if err == nil || !strings.Contains(err.Error(), "模块直连") {
+		t.Fatalf("error=%v, want module-direct without module rejection", err)
+	}
+}
+
 func TestRoutingServicePlistUsesFixedPrivilegedExecutables(t *testing.T) {
 	manager := &routingManager{
 		coreConfigPath: "/Users/test/Library/Application Support/DJOneHubNative/network&core.json",
@@ -206,7 +291,7 @@ func TestBuildIndependentCoreConfigKeepsThreeExitsSeparate(t *testing.T) {
 	}
 	data, err := buildIndependentCoreConfig(
 		config,
-		testRoutingModuleInterface(),
+		testModuleInterfacePtr(),
 		"en7",
 		nil,
 	)
@@ -306,7 +391,7 @@ func TestBuildIndependentCoreConfigUsesSelectedDefaultExit(t *testing.T) {
 			config.DefaultAction = testCase.action
 			data, err := buildIndependentCoreConfig(
 				config,
-				testRoutingModuleInterface(),
+				testModuleInterfacePtr(),
 				"en7",
 				testCase.bypassPatterns,
 			)
@@ -351,7 +436,7 @@ func TestBuildIndependentCoreConfigPrioritizesLocalSOCKSProcessBypass(t *testing
 	bypassPattern := `^/Applications/LocalProxy\.app/`
 	data, err := buildIndependentCoreConfig(
 		config,
-		testRoutingModuleInterface(),
+		testModuleInterfacePtr(),
 		"en7",
 		[]string{bypassPattern},
 	)
@@ -378,7 +463,7 @@ func TestBuildIndependentCoreConfigRequiresLocalSOCKSProcessBypass(t *testing.T)
 	config.DefaultAction = routingActionSystemSOCKS
 	_, err := buildIndependentCoreConfig(
 		config,
-		testRoutingModuleInterface(),
+		testModuleInterfacePtr(),
 		"en7",
 		nil,
 	)
@@ -393,7 +478,7 @@ func TestBuildIndependentCoreConfigAllowsRemoteSOCKSDefaultWithoutProcessBypass(
 	config.SystemSOCKS.Server = "proxy.example.com"
 	data, err := buildIndependentCoreConfig(
 		config,
-		testRoutingModuleInterface(),
+		testModuleInterfacePtr(),
 		"en7",
 		nil,
 	)
@@ -515,13 +600,13 @@ func TestGeneratedRoutingConfigsPassPinnedCoreCheck(t *testing.T) {
 		build func() ([]byte, error)
 	}{
 		{name: "independent", build: func() ([]byte, error) {
-			return buildIndependentCoreConfig(independent, module, "en7", nil)
+			return buildIndependentCoreConfig(independent, &module, "en7", nil)
 		}},
 		{name: "independent-module-default", build: func() ([]byte, error) {
-			return buildIndependentCoreConfig(moduleDefault, module, "en7", nil)
+			return buildIndependentCoreConfig(moduleDefault, &module, "en7", nil)
 		}},
 		{name: "independent-socks-default", build: func() ([]byte, error) {
-			return buildIndependentCoreConfig(socksDefault, module, "en7", bypassPatterns)
+			return buildIndependentCoreConfig(socksDefault, &module, "en7", bypassPatterns)
 		}},
 		{name: "clash", build: func() ([]byte, error) { return buildClashManagedCoreConfig(clash, module) }},
 	}
@@ -576,7 +661,7 @@ func TestGeneratedIndependentConfigPassesRoutingHelperCheck(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			data, err := buildIndependentCoreConfig(
 				testCase.config,
-				testRoutingModuleInterface(),
+				testModuleInterfacePtr(),
 				"en7",
 				testCase.bypassPatterns,
 			)

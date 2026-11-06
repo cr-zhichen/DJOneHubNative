@@ -73,6 +73,13 @@ final class RoutingStore: ObservableObject {
             || config.applications.contains { $0.action == .systemSOCKS }
     }
 
+    /// 当前分流配置是否依赖 4G 模块出口（独立模式仅在使用"模块直连"时依赖）。
+    var usesModule: Bool {
+        if config.mode != .independent { return true }
+        if config.defaultAction == .moduleDirect { return true }
+        return config.applications.contains { $0.action == .moduleDirect }
+    }
+
     var canCheckSystemSOCKS: Bool {
         isLoaded
             && !isCheckingSystemSOCKS
