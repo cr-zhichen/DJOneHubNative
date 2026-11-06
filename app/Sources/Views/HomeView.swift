@@ -39,6 +39,7 @@ struct HomeView: View {
                             launchOptionsCard
                             smsCard
                             priorityCard
+                            moduleIPv6Card
                         }
                     } else if store.statusStale {
                         VStack(spacing: 10) {
@@ -116,6 +117,7 @@ struct HomeView: View {
         .animation(.easeInOut(duration: 0.25), value: store.toast)
         .onAppear {
             store.loadServices()
+            store.loadModuleIPv6()
             autoLaunchEnabled = AutoLaunch.isEnabled
         }
         .onReceive(NotificationCenter.default.publisher(for: AutoLaunch.didChangeNotification)) { _ in
@@ -127,6 +129,82 @@ struct HomeView: View {
         } message: {
             Text("模块重启会导致网络临时中断，正在进行的下载或写入操作会被打断。")
         }
+    }
+
+    // MARK: - 模块 IPv6
+
+    private var moduleIPv6Card: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                sectionTitle("模块 IPv6")
+                Spacer()
+                if store.moduleIPv6Busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("刷新") { store.loadModuleIPv6() }
+                        .controlSize(.small)
+                }
+            }
+            if !store.moduleIPv6Loaded {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("读取 IPv6 配置…").foregroundStyle(.secondary)
+                }
+            } else if let status = store.moduleIPv6, status.available {
+                HStack(spacing: 10) {
+                    Image(systemName: status.enabled ? "network" : "network.slash")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(status.enabled ? Color.orange : Color.secondary)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(status.enabled ? "已开启，IPv6 流量会走 4G" : "已关闭，不再占用 4G 流量")
+                            .font(.callout.weight(.medium))
+                        Text(status.enabled
+                             ? "模块会给 Mac 下发公网 IPv6，而 Wi-Fi 通常没有 IPv6，于是微信等应用的 IPv6 连接只能从 4G 出去。关掉后这些连接会回落 IPv4。"
+                             : "模块网卡不再持有公网 IPv6，所有流量统一按 IPv4 走你设定的默认网络。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 4)
+                    Toggle("", isOn: Binding(
+                        get: { status.enabled },
+                        set: { store.setModuleIPv6(enabled: $0) }))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .disabled(store.moduleIPv6Busy || store.networkRecovering)
+                }
+                HStack(spacing: 6) {
+                    Text(status.enabled ? "全局 IPv6 地址 \(status.addressCount) 个" : "无全局 IPv6 地址")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if let state = status.state, !state.isEmpty {
+                        Text("· \(state)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("切换需输入管理员密码")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                if let error = store.moduleIPv6Error, !error.isEmpty {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text(store.moduleIPv6?.error ?? "未识别到模块网卡（模块未连接）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
     }
 
     // MARK: - 顶部概览条

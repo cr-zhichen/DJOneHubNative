@@ -349,6 +349,44 @@ struct RebootResult: Decodable {
     let response: String?
 }
 
+/// GET /api/module/ipv6
+///
+/// 模块网卡的 IPv6 开关状态。模块的 USB 网卡会通过 RA 下发公网 IPv6，
+/// 而 Wi-Fi 通常没有 IPv6 前缀，导致全系统的 IPv6 出口只剩 4G 模块。
+struct ModuleIPv6Status: Decodable, Equatable {
+    let available: Bool
+    let service: String?
+    let device: String?
+    let enabled: Bool
+    let state: String?
+    let addresses: [String]?
+    let error: String?
+
+    /// 网卡上现存的全局 IPv6 地址数量（关闭后应为 0）。
+    var addressCount: Int { addresses?.count ?? 0 }
+}
+
+struct ModuleIPv6Request: Encodable {
+    let enabled: Bool
+}
+
+/// POST /api/module/ipv6 的返回体
+struct ModuleIPv6SetResult: Decodable {
+    let ok: Bool?
+    let enabled: Bool?
+    let service: String?
+    let addresses: [String]?
+    let orderRestored: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case enabled
+        case service
+        case addresses
+        case orderRestored = "order_restored"
+    }
+}
+
 // MARK: - 语音与通话
 
 struct CallStatus: Decodable, Equatable {
