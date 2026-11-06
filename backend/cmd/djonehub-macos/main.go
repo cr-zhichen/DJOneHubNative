@@ -95,6 +95,12 @@ type app struct {
 	usbATBackoffUntil time.Time
 	usbATBackoffErr   string
 
+	// 连接模式（Mac 完整 / iPhone/iPad）：usbcfg UAC 位切换 + 意图持久化
+	usbProfileMu           sync.Mutex
+	usbProfileIntentLoaded bool
+	usbProfileMobileArmed  bool
+	usbProfileIntentPath   string
+
 	smsMu          sync.RWMutex
 	sms            []receivedSMS
 	smsSendMu      sync.Mutex
@@ -765,6 +771,12 @@ func (a *app) ensureUSBAT() error {
 	a.port = dev.Description()
 	a.discoveryError = ""
 	log.Printf("USB AT bridge opened on DJI %s", dev.Description())
+	// 模块从 iPhone/iPad 拔回 Mac 时的自动恢复（仅在显式保存过意图时触发）。
+	if changed, err := a.autoEnableMacAudioProfile(); err != nil {
+		log.Printf("Mac audio profile check: %v", err)
+	} else if changed {
+		return nil
+	}
 	// The first open may fail while USB is re-enumerating. When a later poll
 	// succeeds, rebuild the eSIM service that startup could not create.
 	a.initUSBATESIMManager()
@@ -820,6 +832,11 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/sms/adopt", a.getSMSAdopt)
 	mux.HandleFunc("POST /api/sms/clear", a.clearSMS)
 	mux.HandleFunc("POST /api/at", a.executeAT)
+	mux.HandleFunc("GET /api/usb/profile", a.usbProfile)
+	mux.HandleFunc("POST /api/usb/profile", a.setUSBProfile)
+	mux.HandleFunc("GET /api/module/network-wake", a.networkWakeStatusAPI)
+	mux.HandleFunc("POST /api/module/network-wake/enable", a.enableNetworkWakeAPI)
+	mux.HandleFunc("POST /api/module/network-wake/disable", a.disableNetworkWakeAPI)
 	mux.HandleFunc("GET /api/network", a.networkDiagnostic)
 	mux.HandleFunc("GET /api/network/traffic", a.networkTraffic)
 	mux.HandleFunc("POST /api/network/check-4g", a.check4GRoute)

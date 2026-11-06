@@ -349,6 +349,29 @@ struct RebootResult: Decodable {
     let response: String?
 }
 
+/// GET/POST /api/usb/profile（连接模式：Mac 完整 / iPhone/iPad）
+struct USBProfileStatus: Decodable {
+    let mode: String
+    let uacEnabled: Bool
+    let configuration: String?
+    let needsReconnect: Bool?
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case mode
+        case uacEnabled = "uac_enabled"
+        case configuration
+        case needsReconnect = "needs_reconnect"
+        case message
+    }
+
+    var isMobile: Bool { mode == "mobile" }
+}
+
+struct USBProfileRequest: Encodable {
+    let mode: String
+}
+
 // MARK: - 语音与通话
 
 struct CallStatus: Decodable, Equatable {
