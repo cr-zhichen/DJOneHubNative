@@ -56,6 +56,12 @@ final class DashboardStore: ObservableObject {
     @Published var usbnetEnabled = false
     @Published var usbnetLoaded = false
     @Published var busy = false
+
+    // 模块网卡 IPv6 开关。读取要跑 networksetup，不放进 2 秒轮询。
+    @Published var moduleIPv6: ModuleIPv6Status?
+    @Published var moduleIPv6Loaded = false
+    @Published var moduleIPv6Busy = false
+    @Published var moduleIPv6Error: String?
     @Published private(set) var networkRecovering = false
     @Published private(set) var networkRecoveryMessage: String?
 
@@ -163,6 +169,10 @@ final class DashboardStore: ObservableObject {
         statusStale = false
         usbnetEnabled = false
         usbnetLoaded = false
+        moduleIPv6 = nil
+        moduleIPv6Loaded = false
+        moduleIPv6Busy = false
+        moduleIPv6Error = nil
         toast = nil
         callModeStatus = nil
         callModeActionInFlight = false
@@ -279,6 +289,53 @@ final class DashboardStore: ObservableObject {
             } catch {
                 busy = false
             }
+        }
+    }
+
+    // MARK: - 模块网卡 IPv6
+
+    func loadModuleIPv6() {
+        guard case .running = backend.state else { return }
+        guard !moduleIPv6Busy else { return }
+        Task {
+            do {
+                let status: ModuleIPv6Status = try await APIClient().get("api/module/ipv6")
+                moduleIPv6 = status
+                moduleIPv6Loaded = true
+                moduleIPv6Error = status.error
+            } catch {
+                moduleIPv6Loaded = true
+                moduleIPv6Error = String(describing: error)
+            }
+        }
+    }
+
+    /// 切换模块网卡 IPv6。会弹一次管理员密码（networksetup 需要 root）。
+    func setModuleIPv6(enabled: Bool) {
+        guard !moduleIPv6Busy else { return }
+        moduleIPv6Busy = true
+        moduleIPv6Error = nil
+        Task {
+            do {
+                let result: ModuleIPv6SetResult = try await APIClient(timeoutInterval: 180).send(
+                    "api/module/ipv6", body: ModuleIPv6Request(enabled: enabled))
+                let restored = result.orderRestored == true
+                let message: String
+                if enabled {
+                    message = "已开启模块 IPv6"
+                } else if restored {
+                    message = "已关闭模块 IPv6，网络服务顺序已自动恢复"
+                } else {
+                    message = "已关闭模块 IPv6，IPv6 流量不再走 4G"
+                }
+                toast = ToastItem(message: message, isSuccess: true)
+            } catch {
+                moduleIPv6Error = String(describing: error)
+                toast = ToastItem(message: "切换模块 IPv6 失败：\(error)", isSuccess: false)
+            }
+            moduleIPv6Busy = false
+            loadModuleIPv6()
+            loadServices()
         }
     }
 

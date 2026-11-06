@@ -231,6 +231,8 @@ var cliScopeByRoute = map[string]string{
 	"DELETE /api/esim/profile":             "esim.manage",
 	"POST /api/esim/download":              "esim.manage",
 	"POST /api/at":                         "module.admin",
+	"GET /api/module/ipv6":                 "device.read",
+	"POST /api/module/ipv6":                "module.admin",
 	"GET /api/call-mode/status":            "module.admin",
 	"POST /api/call-mode/enable":           "module.admin",
 	"POST /api/call-mode/download":         "module.admin",

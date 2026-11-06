@@ -820,6 +820,8 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/sms/adopt", a.getSMSAdopt)
 	mux.HandleFunc("POST /api/sms/clear", a.clearSMS)
 	mux.HandleFunc("POST /api/at", a.executeAT)
+	mux.HandleFunc("GET /api/module/ipv6", a.moduleIPv6StatusAPI)
+	mux.HandleFunc("POST /api/module/ipv6", a.setModuleIPv6API)
 	mux.HandleFunc("GET /api/network", a.networkDiagnostic)
 	mux.HandleFunc("GET /api/network/traffic", a.networkTraffic)
 	mux.HandleFunc("POST /api/network/check-4g", a.check4GRoute)
